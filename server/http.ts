@@ -235,7 +235,7 @@ export function serveStatic(webDir: string, ctx: Context): boolean {
   // Posters and backdrops come from catalog CDNs; everything else is served from here.
   if (file.endsWith('.html')) {
     // Video: the player builds a blob: source (hls.js) and fetches TorBox's segments from its CDN directly.
-    headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://*.tb-cdn.io; media-src 'self' blob: https://*.tb-cdn.io; worker-src 'self' blob:; script-src 'self'; frame-ancestors 'self'; base-uri 'self'";
+    headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://*.tb-cdn.io; media-src 'self' blob: https://*.tb-cdn.io; worker-src 'self' blob:; script-src 'self'; frame-src https://www.youtube-nocookie.com; frame-ancestors 'self'; base-uri 'self'";
   }
   const encoding = pickEncoding(req, headers['Content-Type']!, stat.size);
   if (!encoding) {

@@ -1,4 +1,4 @@
-import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress } from '../../shared/types';
+import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -84,6 +84,11 @@ export const api = {
   twoFactorConfirm: (code: string) => request<{ ok: true }>('POST', '/api/two-factor/confirm', { code }),
   twoFactorOff: (password: string, code: string) => request<{ ok: true }>('POST', '/api/two-factor/off', { password, code }),
   endOtherSessions: () => request<{ ok: true }>('POST', '/api/sessions/end-others'),
+  watchlist: () => request<{ items: WatchlistItem[] }>('GET', '/api/watchlist'),
+  addToList: (item: Omit<WatchlistItem, 'addedAt'>) => request<WatchlistItem>('POST', '/api/watchlist', item),
+  removeFromList: (type: MediaType, imdbId: string) => request<{ ok: true }>('DELETE', `/api/watchlist/${type}/${imdbId}`),
+  markWatched: (body: { type: MediaType; imdbId: string; title: string; poster?: string; background?: string; episodes?: Array<{ season: number; episode: number; title?: string }>; watched: boolean }) =>
+    request<{ items: WatchProgress[] }>('POST', '/api/progress/watched', body),
   logout: () => request<{ ok: true }>('POST', '/api/logout'),
 
   settings: () => request<Settings>('GET', '/api/settings'),

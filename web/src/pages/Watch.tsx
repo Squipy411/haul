@@ -1,8 +1,9 @@
 import { Check, ChevronLeft, ListVideo, X, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings2, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MediaType, PlayCaps, PlaySession, WatchProgress } from '../../../shared/types';
+import type { MediaType, PlayCaps, PlaySession, Release, WatchProgress } from '../../../shared/types';
 import { api, languages, preparePlay } from '../api';
+import { Formats, sizeOf } from '../components/Releases';
 import { useAsync, useRouter, useToast } from '../lib';
 import { usePageTitle } from '../shell';
 
@@ -47,6 +48,35 @@ export function parseVtt(text: string): Cue[] {
     if (body) cues.push({ start: time(from!), end: time(to!.trim().split(/\s+/)[0]!), text: body });
   }
   return cues;
+}
+
+/** Other versions of what's playing that TorBox can stream at once; picking one carries on from the same spot. */
+function VersionsPanel({ session, onPick, onClose }: { session: PlaySession; onPick: (release: Release) => void; onClose: () => void }) {
+  const releases = useAsync(() => (session.type === 'movie' ? api.movieReleases(session.imdbId) : api.episodeReleases(session.imdbId, session.season!, session.episode!)), [session.imdbId, session.season, session.episode]);
+  const ready = (releases.data?.releases ?? []).filter((release) => release.cached).slice(0, 40);
+  return (
+    <aside className="player-panel" aria-label="Versions" onPointerMove={(event) => event.stopPropagation()}>
+      <div className="player-panel-head">
+        <b>Versions ready to stream</b>
+        <button className="player-icon" onClick={onClose} aria-label="Close versions"><X size={18} /></button>
+      </div>
+      <div className="player-episodes">
+        {releases.loading && <div className="player-versions-note"><span className="spinner" />Looking for versions…</div>}
+        {releases.error && <div className="player-versions-note">{releases.error}</div>}
+        {releases.data && !ready.length && <div className="player-versions-note">No other versions are ready on TorBox right now.</div>}
+        {ready.map((release) => {
+          const current = release.name === session.source;
+          return (
+            <button key={release.hash} className={`player-version ${current ? 'current' : ''}`} disabled={current} onClick={() => onPick(release)}>
+              <span className="tags"><Formats info={release.info} /></span>
+              <span className="name">{release.name}</span>
+              <span className="meta num">{[release.kind === 'season' ? 'Season pack' : release.kind === 'multi-season' ? 'Several seasons' : '', sizeOf(release), current ? 'Playing now' : ''].filter(Boolean).join(' · ')}</span>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
 }
 
 /** The show's episodes, in a drawer over the picture: pick one to play it. */
@@ -192,6 +222,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [upNextDismissed, setUpNextDismissed] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [panel, setPanel] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
   /** The end of a film, or of the last episode out: a card instead of a bare play button. */
   const [ended, setEnded] = useState(false);
@@ -323,16 +354,17 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     return () => { alive = false; };
   }, [subtitle, session.subtitles, toast]);
 
-  const save = useCallback((keepalive = false) => {
+  const saveNow = useCallback((keepalive = false): Promise<unknown> => {
     const at = position.current;
-    if (!duration || at < 5) return;
+    if (!duration || at < 5) return Promise.resolve();
     lastSaved.current = Date.now();
-    void api.saveProgress({
+    return api.saveProgress({
       type: session.type, imdbId: session.imdbId, season: session.season, episode: session.episode,
       title: session.title, episodeTitle: session.subtitle?.split(' · ')[1], poster: session.poster, background: session.background,
       position: at, duration
-    }, keepalive);
+    }, keepalive).catch(() => undefined);
   }, [duration, session]);
+  const save = useCallback((keepalive = false) => { void saveNow(keepalive); }, [saveNow]);
 
   useEffect(() => {
     const onHide = () => save(true);
@@ -347,7 +379,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   }, []);
   const panelOpen = useRef(false);
   const menuOpen = useRef(false);
-  useEffect(() => { panelOpen.current = panel; if (panel) setVisible(true); }, [panel]);
+  useEffect(() => { panelOpen.current = panel || versionsOpen; if (panel || versionsOpen) setVisible(true); }, [panel, versionsOpen]);
 
   const playEpisode = useCallback((season: number, episode: number) => {
     save();
@@ -424,6 +456,15 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     save();
     navigate(`/watch/series/${session.imdbId}?s=${session.next.season}&e=${session.next.episode}`, { replace: true });
   }, [navigate, save, session]);
+
+  /** Another version of the same title from TorBox, picking up where this one is. */
+  const switchVersion = useCallback(async (release: Release) => {
+    setVersionsOpen(false);
+    position.current = absolute();
+    await saveNow();
+    const episode = session.type === 'series' ? `s=${session.season}&e=${session.episode}&` : '';
+    navigate(`/watch/${session.type}/${session.imdbId}?${episode}hash=${release.hash}`, { replace: true });
+  }, [absolute, navigate, saveNow, session]);
 
   const skip = useCallback((seconds: number) => {
     seek(absolute() + seconds);
@@ -667,6 +708,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       )}
 
       {panel && <EpisodesPanel session={session} onPick={playEpisode} onClose={() => setPanel(false)} />}
+      {versionsOpen && <VersionsPanel session={session} onPick={(release) => void switchVersion(release)} onClose={() => setVersionsOpen(false)} />}
 
       <div className="player-bottom">
         <div
@@ -732,6 +774,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
                   </>
                 )}
                 <DropdownMenu.Separator className="player-menu-rule" />
+                <DropdownMenu.Item className="popover-item" onSelect={() => { setPanel(false); setVersionsOpen(true); }}>Other versions…</DropdownMenu.Item>
                 <DropdownMenu.Item className="popover-item hide-touch" onSelect={() => setKeysOpen(true)}>Keyboard shortcuts<kbd className="faint">?</kbd></DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>

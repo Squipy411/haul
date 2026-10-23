@@ -14,6 +14,7 @@ import { ProgressStore } from './progress.js';
 import { SearchService } from './search.js';
 import { SettingsService } from './settings.js';
 import { Torbox, TorboxError } from './torbox.js';
+import { Watchlist } from './watchlist.js';
 import * as catalog from './catalog.js';
 import { FollowService } from './follows.js';
 import { Notifier } from './notify.js';
@@ -75,7 +76,8 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   const router = new Router();
   router.get('/health', (ctx) => ctx.json(200, { status: 'ok', version: VERSION }));
   registerAddon(router, { settings, library });
-  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier });
+  const watchlist = new Watchlist(options.dataDir);
+  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier, watchlist });
   const media = new MediaTools();
   const progress = new ProgressStore(options.dataDir);
   const transcodes = registerPlay(router, { library, catalog, search, torbox, media, progress, apiKey: () => settings.value.torboxApiKey });
@@ -167,6 +169,7 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       transcodes.close();
       clearInterval(catalogTimer);
       progress.flush();
+      watchlist.flush();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   };

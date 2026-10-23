@@ -1,8 +1,8 @@
 import { Copy, ExternalLink, Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { LibrarySummary, MetaPreview } from '../../../shared/types';
+import type { LibrarySummary, MetaPreview, WatchlistItem } from '../../../shared/types';
 import { api } from '../api';
-import { Empty, ErrorNote, Loading, Poster, Sheet, TabBar } from '../components/ui';
+import { Empty, ErrorNote, Loading, Poster, PosterCard, Sheet, TabBar } from '../components/ui';
 import { Link, ago, bytes, copyText, count, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
 
 function AddonCard() {
@@ -90,12 +90,35 @@ function MatchSheet({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
   );
 }
 
+/** Titles saved to watch later, newest first, each with a way to take it off the list. */
+function SavedList() {
+  const toast = useToast();
+  const { data, error, reload, setData } = useAsync(() => api.watchlist(), []);
+  if (error) return <ErrorNote message={error} onRetry={reload} />;
+  if (!data) return <Loading />;
+  if (!data.items.length) return <Empty title="Nothing on My list yet">Press “My list” on any show or film to save it for later.</Empty>;
+  const remove = async (item: WatchlistItem) => {
+    setData({ items: data.items.filter((entry) => !(entry.type === item.type && entry.imdbId === item.imdbId)) });
+    await api.removeFromList(item.type, item.imdbId).catch((failure: Error) => { toast(failure.message, 'error'); reload(); });
+  };
+  return (
+    <div className="grid" style={{ marginTop: 16 }}>
+      {data.items.map((item) => (
+        <div key={`${item.type}-${item.imdbId}`} className="saved-card">
+          <PosterCard item={{ id: item.imdbId, type: item.type, name: item.title, poster: item.poster, background: item.background, releaseInfo: item.releaseInfo }} />
+          <button className="btn ghost sm" onClick={() => void remove(item)} aria-label={`Take ${item.title} off My list`}>Remove</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function LibraryPage() {
   const toast = useToast();
   const { navigate } = useRouter();
   const { data, error, reload, setData } = useAsync(() => api.library(), []);
-  const [tabParam, setTab] = useQueryState<'series' | 'movie'>('tab', 'series');
-  const tab = tabParam === 'movie' ? 'movie' : 'series';
+  const [tabParam, setTab] = useQueryState<'series' | 'movie' | 'list'>('tab', 'series');
+  const tab = tabParam === 'movie' || tabParam === 'list' ? tabParam : 'series';
   const [query, setQuery] = useState('');
   const [fixing, setFixing] = useState<LibrarySummary | null>(null);
   usePolling(() => { api.library().then(setData, () => undefined); }, 3000, Boolean(data?.scanning));
@@ -121,50 +144,54 @@ export function LibraryPage() {
       {!data && !error && <Loading />}
       {data && (
         <>
-          <TabBar value={tab} onChange={setTab} tabs={[{ value: 'series', label: 'Shows', count: shows.length }, { value: 'movie', label: 'Movies', count: movies.length }]} />
-          <div className="toolbar">
-            <input className="input filter" placeholder={`Filter ${tab === 'series' ? 'shows' : 'movies'}`} value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter the library" />
-            <span className="count">{unmatched > 0 ? `${unmatched} need${unmatched === 1 ? 's' : ''} a match · ` : ''}{count(items.length, tab === 'series' ? 'show' : 'movie')}</span>
-          </div>
-          {!items.length && (
-            <Empty title={query ? 'Nothing matches' : `No ${tab === 'series' ? 'shows' : 'movies'} yet`}>
-              {query ? 'Try another name.' : 'Downloads land here. Folders you already had appear after the next check.'}
-            </Empty>
-          )}
-          <div className="grid" style={{ marginTop: 16 }}>
-            {items.map((item) => (
-              <div
-                key={item.id}
-                className="poster-card"
-                role="link"
-                tabIndex={0}
-                aria-label={item.imdbId ? item.title : `${item.title}: needs a match`}
-                onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}
-                onKeyDown={(event) => { if (event.key === 'Enter' && event.target === event.currentTarget) event.currentTarget.click(); }}
-              >
-                <div className="poster-wrap">
-                  <Poster src={item.poster} title={item.title} />
-                  {item.imdbId && (
-                    <Link
-                      to={item.type === 'movie' ? `/watch/movie/${item.imdbId}` : `/title/series/${item.imdbId}`}
-                      className="poster-play"
-                      aria-label={item.type === 'movie' ? `Play ${item.title}` : `Episodes of ${item.title}`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <span className="play-badge"><Play size={18} fill="currentColor" /></span>
-                    </Link>
-                  )}
-                </div>
-                <div className="poster-name truncate" title={item.title}>{item.title}</div>
-                <div className="poster-sub row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '2px 6px' }}>
-                  <span>{item.type === 'series' ? `${item.fileCount} episode${item.fileCount === 1 ? '' : 's'}` : item.year ?? bytes(item.size)}</span>
-                  {item.matched
-                    ? <button className="btn ghost sm" style={{ height: 20, padding: '0 6px', fontSize: 12 }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Change</button>
-                    : <button className="pill warning" style={{ border: 0, cursor: 'pointer' }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Needs a match</button>}
-                </div>
+          <TabBar value={tab} onChange={setTab} tabs={[{ value: 'series', label: 'Shows', count: shows.length }, { value: 'movie', label: 'Movies', count: movies.length }, { value: 'list', label: 'My list' }]} />
+          {tab === 'list' ? <SavedList /> : (
+            <>
+              <div className="toolbar">
+                <input className="input filter" placeholder={`Filter ${tab === 'series' ? 'shows' : 'movies'}`} value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter the library" />
+                <span className="count">{unmatched > 0 ? `${unmatched} need${unmatched === 1 ? 's' : ''} a match · ` : ''}{count(items.length, tab === 'series' ? 'show' : 'movie')}</span>
               </div>
-            ))}
-          </div>
+              {!items.length && (
+                <Empty title={query ? 'Nothing matches' : `No ${tab === 'series' ? 'shows' : 'movies'} yet`}>
+                  {query ? 'Try another name.' : 'Downloads land here. Folders you already had appear after the next check.'}
+                </Empty>
+              )}
+              <div className="grid" style={{ marginTop: 16 }}>
+                {items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="poster-card"
+                    role="link"
+                    tabIndex={0}
+                    aria-label={item.imdbId ? item.title : `${item.title}: needs a match`}
+                    onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}
+                    onKeyDown={(event) => { if (event.key === 'Enter' && event.target === event.currentTarget) event.currentTarget.click(); }}
+                  >
+                    <div className="poster-wrap">
+                      <Poster src={item.poster} title={item.title} />
+                      {item.imdbId && (
+                        <Link
+                          to={item.type === 'movie' ? `/watch/movie/${item.imdbId}` : `/title/series/${item.imdbId}`}
+                          className="poster-play"
+                          aria-label={item.type === 'movie' ? `Play ${item.title}` : `Episodes of ${item.title}`}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <span className="play-badge"><Play size={18} fill="currentColor" /></span>
+                        </Link>
+                      )}
+                    </div>
+                    <div className="poster-name truncate" title={item.title}>{item.title}</div>
+                    <div className="poster-sub row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '2px 6px' }}>
+                      <span>{item.type === 'series' ? `${item.fileCount} episode${item.fileCount === 1 ? '' : 's'}` : item.year ?? bytes(item.size)}</span>
+                      {item.matched
+                        ? <button className="btn ghost sm" style={{ height: 20, padding: '0 6px', fontSize: 12 }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Change</button>
+                        : <button className="pill warning" style={{ border: 0, cursor: 'pointer' }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Needs a match</button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
       {data && <div style={{ marginTop: 40 }}><AddonCard /></div>}

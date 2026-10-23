@@ -53,6 +53,17 @@ export function Browse({ type, catalog }: { type: MediaType; catalog: string }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, catalog, genre]);
 
+  // The next page loads as you near the bottom, instead of waiting for a button.
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || done || loading || error || !items.length) return;
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) void load(items.length); }, { rootMargin: '800px 0px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done, loading, error, items.length]);
+
   const options = catalog === 'year' ? Array.from({ length: 8 }, (_, index) => String(year - index)) : ['', ...GENRES];
 
   return (
@@ -67,7 +78,8 @@ export function Browse({ type, catalog }: { type: MediaType; catalog: string }) 
       {error && <ErrorNote message={error} onRetry={() => load(items.length)} />}
       <div className="grid">{items.map((item) => <PosterCard key={item.id} item={item} />)}</div>
       {loading && <Loading />}
-      {!loading && !done && items.length > 0 && <div style={{ marginTop: 28 }}><button className="btn" onClick={() => load(items.length)}>Load more</button></div>}
+      {!done && items.length > 0 && <div ref={sentinel} aria-hidden="true" style={{ height: 1 }} />}
+      {done && items.length > 0 && <p className="faint" style={{ marginTop: 28, fontSize: 13 }}>That's everything in this list.</p>}
     </div>
   );
 }

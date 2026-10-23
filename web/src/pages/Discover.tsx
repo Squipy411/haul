@@ -2,6 +2,7 @@ import { Download, Info, Play, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { Job, MetaPreview, WatchProgress } from '../../../shared/types';
 import { api, preparePlay, rememberPreview } from '../api';
+import { ListButton, TrailerButton } from '../components/Extras';
 import { Hero } from '../components/Hero';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
 import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib';
@@ -184,18 +185,23 @@ function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPrevi
   }, [rows]);
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  // A trailer playing over the page holds the banner still, so the title doesn't change under it.
+  const [trailer, setTrailer] = useState(false);
   // Load the next backdrop ahead of time so the switch doesn't flash.
   useEffect(() => {
     const next = picks[(index + 1) % Math.max(1, picks.length)];
     if (next?.background) { const image = new Image(); image.decoding = 'async'; image.src = next.background; }
   }, [index, picks]);
   useEffect(() => {
-    if (paused || picks.length < 2) return;
+    if (paused || trailer || picks.length < 2) return;
     const timer = window.setTimeout(() => setIndex((value) => (value + 1) % picks.length), 9000);
     return () => window.clearTimeout(timer);
-  }, [index, paused, picks.length]);
+  }, [index, paused, trailer, picks.length]);
   const item = picks[index % Math.max(1, picks.length)];
+  // The full details (trailer, whether it's on My list) for the title showing; cached, so quick.
+  const details = useAsync(() => (item ? api.meta(item.type, item.id).catch(() => null) : Promise.resolve(null)), [item?.type, item?.id]);
   if (!item) return null;
+  const meta = details.data?.id === item.id ? details.data : null;
   const entry = resume.find((progress) => progress.imdbId === item.id && progress.type === item.type);
   const watch = item.type === 'series'
     ? `/watch/series/${item.id}?s=${entry?.season ?? 1}&e=${entry?.episode ?? 1}`
@@ -217,8 +223,23 @@ function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPrevi
       >
         <Link to={watch} className="btn primary lg" onPointerEnter={() => preparePlay({ type: item.type, imdbId: item.id, season: item.type === 'series' ? entry?.season ?? 1 : undefined, episode: item.type === 'series' ? entry?.episode ?? 1 : undefined }, true)}><Play size={17} fill="currentColor" />{entry && !entry.upNext ? 'Resume' : 'Play'}</Link>
         <Link to={`/title/${item.type}/${item.id}`} className="btn lg glass" onClick={() => rememberPreview(item)}><Info size={17} />More info</Link>
+        {meta && <TrailerButton url={meta.trailer} title={item.name} className="btn lg glass" onOpenChange={setTrailer} />}
+        {meta && <ListButton key={item.id} item={{ type: item.type, imdbId: item.id, title: item.name, poster: item.poster, background: item.background, releaseInfo: item.releaseInfo }} initial={Boolean(meta.inList)} className="btn lg glass hide-xs" />}
       </Hero>
     </div>
+  );
+}
+
+/** Saved to watch later, newest first. Hidden when empty. */
+function MyList() {
+  const { data } = useAsync(() => api.watchlist(), []);
+  const items = data?.items ?? [];
+  if (!items.length) return null;
+  return (
+    <section>
+      <div className="section-title"><h2>My list</h2><Link to="/library?tab=list" className="link">See all</Link></div>
+      <div className="shelf">{items.slice(0, 20).map((item) => <PosterCard key={`${item.type}-${item.imdbId}`} item={{ id: item.imdbId, type: item.type, name: item.title, poster: item.poster, background: item.background, releaseInfo: item.releaseInfo }} />)}</div>
+    </section>
   );
 }
 
@@ -254,6 +275,7 @@ export function Discover() {
       <div className="home-top">
         <Transfers jobs={downloads.data?.jobs ?? []} />
       </div>
+      <MyList />
       <NewEpisodes />
       <YourLibrary />
       <div className="home-top">

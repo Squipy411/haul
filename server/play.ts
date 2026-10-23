@@ -523,6 +523,35 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     ctx.json(200, saved);
   });
 
+  /** Marks episodes (or a film) watched or not without playing them, e.g. a season you saw elsewhere. */
+  router.post('/api/progress/watched', async (ctx) => {
+    const body = await ctx.body();
+    const type: MediaType = body.type === 'series' ? 'series' : 'movie';
+    const imdbId = String(body.imdbId ?? '');
+    if (!/^tt\d+$/.test(imdbId)) throw new HttpError(400, 'Unknown title');
+    const text = (value: unknown, max = 200) => (typeof value === 'string' && value ? value.slice(0, max) : undefined);
+    const targets: Array<{ season?: number; episode?: number; title?: string }> = type === 'series'
+      ? (Array.isArray(body.episodes) ? body.episodes : [])
+        .filter((entry: { season?: unknown; episode?: unknown }) => Number.isInteger(entry?.season) && Number.isInteger(entry?.episode))
+        .map((entry: { season: number; episode: number; title?: unknown }) => ({ season: entry.season, episode: entry.episode, title: text(entry.title) }))
+        .slice(0, 1000)
+      : [{}];
+    if (!targets.length) throw new HttpError(400, 'Which episodes?');
+    // In episode order, so the last one marked is where you are and Continue watching offers the next.
+    targets.sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0));
+    for (const target of targets) {
+      const key = progressKey(type, imdbId, target.season, target.episode);
+      if (body.watched === false) { progress.remove(key); continue; }
+      const duration = progress.get(key)?.duration || 1;
+      progress.save({
+        key, type, imdbId, season: target.season, episode: target.episode,
+        title: text(body.title) ?? imdbId, episodeTitle: target.title, poster: text(body.poster, 500), background: text(body.background, 500),
+        position: duration, duration
+      });
+    }
+    ctx.json(200, { items: progress.forTitle(type, imdbId) });
+  });
+
   router.get('/api/progress/title/:type/:id', (ctx) => ctx.json(200, { items: progress.forTitle(ctx.params.type === 'series' ? 'series' : 'movie', ctx.params.id!) }));
 
   router.delete('/api/progress/:key', (ctx) => { progress.remove(ctx.params.key!); ctx.json(200, { ok: true }); });

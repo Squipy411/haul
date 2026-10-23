@@ -264,6 +264,8 @@ export interface Meta extends MetaPreview {
   seasons: number[];
   ownedMovie?: boolean;
   follow?: Follow | null;
+  /** Saved to "My list". */
+  inList?: boolean;
 }
 
 export interface HomeRow {
@@ -454,6 +456,17 @@ export interface PlaySession {
   source?: string;
   /** TorBox stream id, for switching tracks. */
   stream?: string;
+}
+
+/** A title saved to "My list". */
+export interface WatchlistItem {
+  type: MediaType;
+  imdbId: string;
+  title: string;
+  poster?: string;
+  background?: string;
+  releaseInfo?: string;
+  addedAt: number;
 }
 
 export interface WatchProgress {

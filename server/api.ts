@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Meta, MediaType, NewEpisodes, Release, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
 import { addonUrls } from './addon.js';
+import type { Watchlist } from './watchlist.js';
 import { type Auth, clientIp, describeDevice, isFromInternet, isHttps, validPassword } from './auth.js';
 import { checkCode, newSecret, otpauthUrl } from './totp.js';
 import * as catalog from './catalog.js';
@@ -30,6 +31,7 @@ interface Deps {
   updates: UpdateChecker;
   follows: FollowService;
   notifier: Notifier;
+  watchlist: Watchlist;
 }
 
 /** Routes that answer before sign-in. Setup routes also check that setup is actually open. */
@@ -58,7 +60,7 @@ function aired(released?: string): boolean {
 }
 
 export function registerApi(router: Router, deps: Deps): void {
-  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier } = deps;
+  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, watchlist } = deps;
 
   const withOwnership = (meta: Meta): Meta => {
     if (meta.type === 'series') {
@@ -336,7 +338,25 @@ export function registerApi(router: Router, deps: Deps): void {
 
   router.get('/api/meta/:type/:id', async (ctx) => {
     const meta = await catalog.meta(asType(ctx.params.type), asImdb(ctx.params.id));
-    ctx.json(200, { ...withOwnership(meta), follow: follows.find(meta.type, meta.id) ?? null });
+    ctx.json(200, { ...withOwnership(meta), follow: follows.find(meta.type, meta.id) ?? null, inList: watchlist.has(meta.type, meta.id) });
+  });
+
+  // --- My list --------------------------------------------------------------------
+  router.get('/api/watchlist', (ctx) => ctx.json(200, { items: watchlist.list() }));
+
+  router.post('/api/watchlist', async (ctx) => {
+    const body = await ctx.body();
+    const text = (value: unknown, max = 500) => (typeof value === 'string' && value ? value.slice(0, max) : undefined);
+    const item = watchlist.add({
+      type: asType(body.type), imdbId: asImdb(body.imdbId), title: text(body.title, 200) ?? body.imdbId,
+      poster: text(body.poster), background: text(body.background), releaseInfo: text(body.releaseInfo, 40)
+    });
+    ctx.json(200, item);
+  });
+
+  router.delete('/api/watchlist/:type/:id', (ctx) => {
+    watchlist.remove(asType(ctx.params.type), asImdb(ctx.params.id));
+    ctx.json(200, { ok: true });
   });
 
   // --- Releases ---------------------------------------------------------------

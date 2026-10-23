@@ -1,11 +1,12 @@
-import { Check, Download, Play } from 'lucide-react';
+import { Check, Download, Ellipsis, Play } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Episode, Job, MediaType, Meta, Release, SeasonPlan, WatchProgress } from '../../../shared/types';
 import { api, preparePlay, previewOf } from '../api';
+import { ListButton, TrailerButton } from '../components/Extras';
 import { FollowControl } from '../components/Follow';
 import { Hero } from '../components/Hero';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
-import { Empty, ErrorNote, Loading, Picker, Sheet, TabBar, Toggle, join } from '../components/ui';
+import { Empty, ErrorNote, Loading, Menu, Picker, Sheet, TabBar, Toggle, join } from '../components/ui';
 import { Link, airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
 import { diskFor, useCrumb, useStatus } from '../shell';
 
@@ -257,8 +258,8 @@ const minutesLeft = (entry: WatchProgress) => Math.max(1, Math.round((entry.dura
 const isWatched = (entry?: WatchProgress) => Boolean(entry && entry.duration > 0 && entry.position / entry.duration >= 0.92);
 
 /** One episode in the watch list: press the picture or the name to play it. */
-function EpisodeRow({ meta, episode, incoming, progress, open, onOpen }: {
-  meta: Meta; episode: Episode; incoming?: number; progress?: WatchProgress; open: boolean; onOpen: () => void;
+function EpisodeRow({ meta, episode, incoming, progress, open, onOpen, onWatched }: {
+  meta: Meta; episode: Episode; incoming?: number; progress?: WatchProgress; open: boolean; onOpen: () => void; onWatched: (watched: boolean) => void;
 }) {
   const download = useDownloader(meta);
   const { navigate } = useRouter();
@@ -294,6 +295,7 @@ function EpisodeRow({ meta, episode, incoming, progress, open, onOpen }: {
       </div>
       {isAired && (
         <div className="episode-actions">
+          <button className={`btn sm icon ${watched ? 'watched-on' : 'ghost'}`} onClick={() => onWatched(!watched)} aria-pressed={watched} aria-label={watched ? `Episode ${episode.episode} watched. Mark as not watched` : `Mark episode ${episode.episode} as watched`} title={watched ? 'Watched. Press to mark as not watched' : 'Mark as watched'}><Check size={14} strokeWidth={watched ? 3 : 2} /></button>
           <button className={`btn sm ${open ? '' : 'ghost'}`} onClick={onOpen} aria-expanded={open}>
             <Download size={14} />{open ? 'Hide versions' : 'Versions'}
           </button>
@@ -319,7 +321,7 @@ function EpisodeRow({ meta, episode, incoming, progress, open, onOpen }: {
   );
 }
 
-function SeriesView({ meta }: { meta: Meta }) {
+function SeriesView({ meta, onWatched }: { meta: Meta; onWatched: () => void }) {
   const { search, navigate } = useRouter();
   const seasons = meta.seasons.filter((season) => season > 0).concat(meta.seasons.includes(0) ? [0] : []);
   const latestAired = [...seasons].reverse().find((season) => season > 0 && meta.episodes.some((episode) => episode.season === season && aired(episode)));
@@ -344,6 +346,19 @@ function SeriesView({ meta }: { meta: Meta }) {
     return map;
   }, [watched.data]);
   const packs = useAsync(() => (tab === 'download' ? api.seasonPacks(meta.id, season) : Promise.resolve(null)), [tab, season, meta.id]);
+  const toast = useToast();
+  /** Marks episodes watched or not without playing them; the list updates at once and settles on the server's answer. */
+  const markWatched = async (picked: Episode[], seen: boolean, announce?: string) => {
+    if (!picked.length) return;
+    try {
+      const result = await api.markWatched({ type: 'series', imdbId: meta.id, title: meta.name, poster: meta.poster, background: meta.background, episodes: picked.map((entry) => ({ season: entry.season, episode: entry.episode, title: entry.title })), watched: seen });
+      watched.setData(result);
+      onWatched();
+      if (announce) toast(announce);
+    } catch (failure) {
+      toast((failure as Error).message, 'error');
+    }
+  };
 
   useEffect(() => { setSelected(new Set()); setOpenEpisode(null); }, [season]);
   // "Download" on Home's new-episodes list lands here and opens the plan for just those episodes.
@@ -390,6 +405,14 @@ function SeriesView({ meta }: { meta: Meta }) {
             return { value, label: seasonName(value), hint: `${count} ep` };
           })} />
           <span className="muted num">{summary}</span>
+          <Menu
+            label={`More for ${seasonName(season)}`}
+            trigger={<button className="btn ghost sm icon" aria-label={`More for ${seasonName(season)}`}><Ellipsis size={16} /></button>}
+            actions={[
+              { label: `Mark ${seasonName(season).toLowerCase()} as watched`, onSelect: () => void markWatched(episodes.filter(aired), true, `${seasonName(season)} marked as watched`), disabled: !episodes.some(aired) },
+              { label: `Mark ${seasonName(season).toLowerCase()} as not watched`, onSelect: () => void markWatched(episodes, false, `${seasonName(season)} marked as not watched`), disabled: !seenCount }
+            ]}
+          />
         </div>
         <TabBar value={tab} onChange={(value) => { setTab(value); navigate(`/title/series/${meta.id}?season=${season}${value === 'download' ? '&tab=download' : ''}`, { replace: true }); }} tabs={[{ value: 'episodes', label: 'Episodes' }, { value: 'download', label: 'Download' }]} />
       </div>
@@ -405,6 +428,7 @@ function SeriesView({ meta }: { meta: Meta }) {
               progress={progressOf.get(`${episode.season}:${episode.episode}`)}
               open={openEpisode === episode.episode}
               onOpen={() => setOpenEpisode(openEpisode === episode.episode ? null : episode.episode)}
+              onWatched={(value) => void markWatched([episode], value)}
             />
           ))}
         </div>
@@ -473,7 +497,7 @@ function MovieView({ meta }: { meta: Meta }) {
           <h2>Versions</h2>
           <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>Press ▶ to watch one now from TorBox, or download it to your library.</p>
         </div>
-        {releases.data && <span className="faint num">{releases.data.releases.length} found</span>}
+        {releases.data && <span className="faint num" style={{ whiteSpace: 'nowrap' }}>{releases.data.releases.length} found</span>}
       </div>
       {releases.loading && <Loading text="Searching torrents and checking TorBox…" />}
       {releases.error && <ErrorNote message={releases.error} onRetry={releases.reload} />}
@@ -501,6 +525,29 @@ function PlayButton({ meta, resume }: { meta: Meta; resume?: WatchProgress }) {
       <Play size={17} fill="currentColor" />{label}
       {resuming && resume.duration > 0 && <span className="btn-meta">{minutesLeft(resume)} min left</span>}
     </Link>
+  );
+}
+
+/** A film's "…" menu: mark it watched (or not) without playing it. */
+function MovieMore({ meta, onWatched }: { meta: Meta; onWatched: () => void }) {
+  const toast = useToast();
+  const progress = useAsync(() => api.progressFor('movie', meta.id).catch(() => ({ items: [] as WatchProgress[] })), [meta.id]);
+  const seen = isWatched(progress.data?.items[0]);
+  const mark = async (watched: boolean) => {
+    try {
+      progress.setData(await api.markWatched({ type: 'movie', imdbId: meta.id, title: meta.name, poster: meta.poster, background: meta.background, watched }));
+      onWatched();
+      toast(watched ? `${meta.name} marked as watched` : `${meta.name} marked as not watched`);
+    } catch (failure) {
+      toast((failure as Error).message, 'error');
+    }
+  };
+  return (
+    <Menu
+      label={`More for ${meta.name}`}
+      trigger={<button className="btn glass icon" aria-label={`More for ${meta.name}`}><Ellipsis size={17} /></button>}
+      actions={[seen ? { label: 'Mark as not watched', onSelect: () => void mark(false) } : { label: 'Mark as watched', onSelect: () => void mark(true) }]}
+    />
   );
 }
 
@@ -536,11 +583,14 @@ export function TitlePage({ type, id }: { type: MediaType; id: string }) {
         footer={meta.cast?.length ? <div className="hero-cast">Starring {meta.cast.slice(0, 4).join(', ')}</div> : null}
       >
         {resume.data && <PlayButton meta={meta} resume={entry} />}
+        <TrailerButton url={meta.trailer} title={meta.name} />
+        <ListButton item={{ type: meta.type, imdbId: meta.id, title: meta.name, poster: meta.poster, background: meta.background, releaseInfo: meta.releaseInfo }} initial={Boolean(meta.inList)} />
         <FollowControl target={{ type: meta.type, imdbId: meta.id, title: meta.name }} initial={meta.follow ?? null} />
         {meta.type === 'movie' && <button className="btn glass" onClick={toVersions}><Download size={15} />{meta.ownedMovie ? 'Other versions' : 'Download'}</button>}
+        {meta.type === 'movie' && <MovieMore meta={meta} onWatched={resume.reload} />}
         {meta.ownedMovie && <span className="pill positive" style={{ alignSelf: 'center' }}>In your library</span>}
       </Hero>
-      {meta.type === 'series' ? <SeriesView key={meta.id} meta={meta} /> : <MovieView meta={meta} />}
+      {meta.type === 'series' ? <SeriesView key={meta.id} meta={meta} onWatched={resume.reload} /> : <MovieView meta={meta} />}
     </div>
   );
 }

@@ -13,6 +13,7 @@ You need a TorBox account and either Docker or a Windows PC.
 ## What you can do
 
 - **Watch in your browser.** Press play on any film or episode: Haul plays your own file, or streams the best version TorBox already has without downloading it first. Resume where you stopped, Continue watching, Skip intro, next episode, an episodes drawer in the player, subtitles and audio tracks.
+- **Save, catch up, look ahead.** Press **My list** on anything to keep it for later (a row on Home and a tab in My library). Watch the **trailer** without leaving Haul. Mark an episode, a whole season or a film as watched in one go, and Continue watching picks up after it.
 - **Built like a streaming site.** A featured hero on Home, rows for what you're watching, new episodes of your shows and your own library, Shows and Movies to browse by genre, and title pages where episodes show what you've watched. Downloading lives one tab away.
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
 - **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
@@ -116,6 +117,8 @@ TorBox needs a few seconds to start converting a file it hasn't streamed before,
 Haul remembers the audio language and subtitles you last picked, so the next episode (or the next film) starts the same way. With TorBox the subtitles are burned into the picture, which can add a second or two to the start. The settings button in the player also has playback speed, from 0.75× to 2×.
 
 On a phone, tap the picture to show or hide the controls, double-tap the left or right side to skip 10 seconds (keep tapping to skip further), and drag along the bar to find a spot. The lock screen, headphones and keyboard media keys can play, pause, skip and go to the next episode.
+
+Not happy with what's playing (a dub, a poor encode, the wrong cut)? In the player's settings menu, **Other versions…** lists every version TorBox can stream right away, and picks up from the same spot in the one you choose.
 
 If the stream breaks or stalls partway through (TorBox hiccups, Wi-Fi drops), the player starts it again from the same spot by itself, and carries on when your connection comes back.
 
