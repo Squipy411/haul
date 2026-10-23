@@ -4,6 +4,7 @@ import { Checkbox, Dialog, DropdownMenu, Select, Switch, Tabs, Tooltip } from 'r
 import { type ReactNode, useState } from 'react';
 import type { MetaPreview } from '../../../shared/types';
 import { rememberPreview } from '../api';
+import { hoverPreviews } from './HoverPreview';
 import { Link } from '../lib';
 
 /** The product's mark: a box opening onto a play button, for a TorBox player. */
@@ -29,7 +30,13 @@ export function Poster({ src, title, owned }: { src?: string; title: string; own
 
 export function PosterCard({ item }: { item: MetaPreview }) {
   return (
-    <Link to={`/title/${item.type}/${item.id}`} className="poster-card" onClick={() => rememberPreview(item)}>
+    <Link
+      to={`/title/${item.type}/${item.id}`}
+      className="poster-card"
+      onClick={() => rememberPreview(item)}
+      onPointerEnter={(event) => { if (event.pointerType === 'mouse') hoverPreviews.enter(item, event.currentTarget); }}
+      onPointerLeave={hoverPreviews.leave}
+    >
       <Poster src={item.poster} title={item.name} owned={item.inLibrary} />
       <div className="poster-name truncate" title={item.name}>{item.name}</div>
       <div className="poster-sub">{[item.releaseInfo, item.imdbRating && `IMDb ${item.imdbRating}`].filter(Boolean).join(' · ')}</div>

@@ -711,3 +711,22 @@ a.episode-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .swatch { width: 22px; height: 22px; padding: 0; border: 2px solid transparent; border-radius: 999px; cursor: pointer; }
 .swatch[aria-checked="true"] { outline: 2px solid #fff; outline-offset: 2px; }
 @media (max-width: 600px) { .profile-row { grid-template-columns: auto minmax(0, 1fr); } .profile-row > .row { grid-column: 1 / -1; justify-content: flex-start !important; } .profile-choice { width: 92px; } }
+
+/* ---------- seek-bar pictures ---------- */
+.player-bar .hover-time.with-picture { display: grid; justify-items: center; gap: 4px; padding: 4px 4px 5px; border-radius: 10px; }
+.player-bar .hover-time img { display: block; width: 192px; max-width: 42vw; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; background: #000; }
+.seek-preview-source { position: fixed; left: -9999px; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+
+/* ---------- trailer on hover ---------- */
+.hover-card { position: fixed; z-index: 90; overflow: hidden; border-radius: var(--radius-card); background: #141414; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7); animation: hover-pop 0.18s var(--ease-out); } /* taste-skill-ignore: floats over the page */
+@keyframes hover-pop { from { opacity: 0; transform: scale(0.94); } }
+.hover-media { position: relative; display: block; aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+.hover-media img, .hover-media iframe { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border: 0; }
+.hover-media iframe { opacity: 0; pointer-events: none; transform: scale(1.2); transition: opacity 0.4s ease-out; }
+.hover-media iframe.ready { opacity: 1; }
+.hover-body { display: grid; gap: 6px; padding: 12px 14px 14px; }
+.hover-body b { font-size: 16px; font-weight: 600; }
+.hover-facts { font-size: 12px; color: var(--muted); }
+.hover-body p { margin: 0 0 4px; font-size: 13px; line-height: 18px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.trailer-failed { display: grid; place-content: center; justify-items: center; gap: 14px; height: 100%; padding: 24px; text-align: center; color: rgba(255, 255, 255, 0.8); }
+.trailer-failed p { margin: 0; }

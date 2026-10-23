@@ -4,6 +4,7 @@ import { DropdownMenu, Tooltip } from 'radix-ui';
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
+import { HoverPreviewLayer } from './components/HoverPreview';
 import { ProfileMenu, ProfilePicker } from './components/Profiles';
 import { Figure, Loading, Mark } from './components/ui';
 import { Link, bytes, count, speed, usePolling, useRouter } from './lib';
@@ -254,6 +255,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
             </DropdownMenu.Root>
           </nav>
           <Palette open={searchOpen} onOpenChange={setSearchOpen} />
+          <HoverPreviewLayer />
         </Tooltip.Provider>
       </SearchContext.Provider>
     </CrumbContext.Provider>

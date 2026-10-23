@@ -32,6 +32,107 @@ function clock(seconds: number): string {
 
 interface Cue { start: number; end: number; text: string }
 
+/**
+ * Pictures for the seek bar. A second, hidden copy of the video jumps to the moment under the pointer and
+ * a frame is taken from it: one at a time, only while you point at the bar, newest request first, and each
+ * picture kept once taken. Times are rounded to steps (10 s for an episode, longer for a film) so nearby
+ * points share a picture.
+ */
+function useSeekPreviews(source: { url: string; kind: 'file' | 'hls' } | null, duration: number) {
+  const [, redraw] = useState(0);
+  const frames = useRef(new Map<number, string>());
+  const engine = useRef<{ video: HTMLVideoElement; hls?: HlsInstance; busy: boolean; wanted: number | null; broken: boolean } | null>(null);
+  const step = Math.max(10, Math.ceil(duration / 150 / 5) * 5);
+  const bucket = useCallback((time: number) => Math.max(0, Math.round(time / step) * step), [step]);
+
+  // A new source (another audio track, a restart) starts the pictures again.
+  useEffect(() => {
+    frames.current.clear();
+    return () => {
+      engine.current?.hls?.destroy();
+      engine.current?.video.remove();
+      engine.current = null;
+    };
+  }, [source?.url]);
+
+  const grab = useCallback(async (at: number) => {
+    const state = engine.current;
+    if (!state || state.busy || state.broken) return;
+    state.busy = true;
+    try {
+      const { video } = state;
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error('slow')), 20_000);
+        const done = () => { window.clearTimeout(timer); video.removeEventListener('seeked', done); resolve(); };
+        video.addEventListener('seeked', done);
+        video.currentTime = Math.min(at + 0.5, Math.max(0, (duration || at + 1) - 1));
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = 192;
+      canvas.height = Math.round(192 * ((video.videoHeight || 9) / (video.videoWidth || 16)));
+      canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.current.set(at, canvas.toDataURL('image/jpeg', 0.72));
+      if (frames.current.size > 300) frames.current.delete(frames.current.keys().next().value!);
+      redraw((value) => value + 1);
+    } catch {
+      // A frame that won't come (a slow piece, a format the browser can't draw) just leaves the time showing.
+    } finally {
+      state.busy = false;
+      const next = state.wanted;
+      state.wanted = null;
+      if (next !== null && !frames.current.has(next)) void grab(next);
+    }
+  }, [duration]);
+
+  /** Asks for the picture at a time (from the pointer moving over the bar). */
+  const request = useCallback((time: number) => {
+    if (!source || !duration) return;
+    const at = bucket(time);
+    if (!frames.current.has(at)) {
+      if (!engine.current) {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto';
+        video.crossOrigin = 'anonymous';
+        video.className = 'seek-preview-source';
+        document.body.appendChild(video);
+        const state: { video: HTMLVideoElement; hls?: HlsInstance; busy: boolean; wanted: number | null; broken: boolean } = { video, busy: false, wanted: null, broken: false };
+        engine.current = state;
+        if (source.kind === 'file') video.src = source.url;
+        else {
+          state.busy = true;
+          void import('hls.js/light').then(({ default: Hls }) => {
+            if (engine.current !== state) return;
+            if (!Hls.isSupported()) { state.broken = true; return; }
+            // Only the piece for the picture is fetched: no buffering ahead.
+            const hls = new Hls({ autoStartLoad: true, startPosition: at, maxBufferLength: 1, maxMaxBufferLength: 2, backBufferLength: 0, maxBufferSize: 8 * 1024 * 1024, startFragPrefetch: false, testBandwidth: false, enableWorker: true } as any) as unknown as HlsInstance;
+            state.hls = hls;
+            hls.on(Hls.Events.ERROR, (_event, data) => { if (data?.fatal) state.broken = true; });
+            hls.loadSource(source.url);
+            hls.attachMedia(video);
+            video.addEventListener('loadedmetadata', () => { state.busy = false; const next = state.wanted ?? at; state.wanted = null; void grab(next); }, { once: true });
+          });
+        }
+        if (source.kind === 'file') video.addEventListener('loadedmetadata', () => { void grab(at); }, { once: true });
+      } else if (engine.current.busy) engine.current.wanted = at;
+      else void grab(at);
+    }
+  }, [bucket, duration, grab, source]);
+
+  /** The picture for a time, or meanwhile the nearest one already taken (within a minute). */
+  const frameAt = (time: number): string | undefined => {
+    const exact = frames.current.get(bucket(time));
+    if (exact) return exact;
+    let best: string | undefined;
+    let distance = 60;
+    for (const [taken, image] of frames.current) if (Math.abs(taken - time) < distance) { distance = Math.abs(taken - time); best = image; }
+    return best;
+  };
+
+  return { request, frameAt };
+}
+
 /** WebVTT cues with markup removed. */
 export function parseVtt(text: string): Cue[] {
   const time = (value: string) => {
@@ -218,7 +319,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [hover, setHover] = useState<{ x: number; time: number } | null>(null);
+  const [hover, setHover] = useState<{ x: number; time: number; width: number } | null>(null);
   const [upNextDismissed, setUpNextDismissed] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [autoSkip, setAutoSkip] = useState(() => { try { return localStorage.getItem('haul.autoskip') === '1'; } catch { return false; } });
@@ -242,6 +343,11 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const lastSaved = useRef(0);
   /** Last known position, kept outside the video element so it can be saved after it's gone. */
   const position = useRef(session.resume ?? 0);
+
+  // Seek-bar pictures: the file itself, or the same stream (not for a file converted on this server, whose
+  // stream starts wherever you last jumped to).
+  const previewSource = useMemo(() => (mode === 'direct' ? { url, kind: 'file' as const } : mode === 'hls' ? { url, kind: 'hls' as const } : null), [mode, url]);
+  const previews = useSeekPreviews(previewSource, duration);
 
   // While a source is (re)loading the element reads 0, so the last known position stands in.
   const absolute = useCallback(() => (video.current && video.current.readyState >= 1 ? offset + video.current.currentTime : position.current), [offset]);
@@ -379,8 +485,10 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const reveal = useCallback(() => {
     setVisible(true);
     window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => { if (!video.current?.paused && !panelOpen.current && !menuOpen.current) setVisible(false); }, 3000);
+    hideTimer.current = window.setTimeout(() => { if (!video.current?.paused && !panelOpen.current && !menuOpen.current && !overControls.current) setVisible(false); }, 3000);
   }, []);
+  /** The pointer is on the controls themselves (the bar, the buttons): they stay until it leaves. */
+  const overControls = useRef(false);
   const panelOpen = useRef(false);
   const menuOpen = useRef(false);
   useEffect(() => { panelOpen.current = panel || versionsOpen; if (panel || versionsOpen) setVisible(true); }, [panel, versionsOpen]);
@@ -634,8 +742,11 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const onBar = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    return { x: event.clientX - rect.left, time: ratio * duration };
+    const at = { x: event.clientX - rect.left, time: ratio * duration, width: rect.width };
+    previews.request(at.time);
+    return at;
   };
+  const preview = hover ? previews.frameAt(hover.time) : undefined;
   const sourceLabel = session.kind === 'torbox' ? 'Streaming from TorBox' : session.converting && mode === 'stream' ? 'Your file, converted for this browser' : 'Your file';
 
   return (
@@ -752,7 +863,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       {panel && <EpisodesPanel session={session} onPick={playEpisode} onClose={() => setPanel(false)} />}
       {versionsOpen && <VersionsPanel session={session} onPick={(release) => void switchVersion(release)} onClose={() => setVersionsOpen(false)} />}
 
-      <div className="player-bottom">
+      <div className="player-bottom" onPointerEnter={(event) => { if (event.pointerType === 'mouse') overControls.current = true; }} onPointerLeave={() => { overControls.current = false; reveal(); }}>
         <div
           className={`player-bar${scrub !== null ? ' scrubbing' : ''}`}
           onPointerMove={(event) => {
@@ -774,7 +885,13 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         >
           <div className="track"><i className="buffered" style={{ width: `${bufferedPct}%` }} /><i className="played" style={{ width: `${progressPct}%` }} /></div>
           <span className="knob" style={{ left: `${progressPct}%` }} />
-          {hover && duration > 0 && <span className="hover-time num" style={{ left: hover.x }}>{clock(hover.time)}</span>}
+          {hover && duration > 0 && (
+            // Kept inside the bar's ends, so a picture near the start or end isn't cut off.
+            <span className={`hover-time num ${preview ? 'with-picture' : ''}`} style={{ left: Math.min(Math.max(hover.x, preview ? 100 : 30), hover.width - (preview ? 100 : 30)) }}>
+              {preview && <img src={preview} alt="" />}
+              {clock(hover.time)}
+            </span>
+          )}
         </div>
         <div className="player-row">
           <button className="player-icon" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}</button>

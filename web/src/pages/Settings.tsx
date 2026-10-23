@@ -3,6 +3,7 @@ import { encode } from 'uqr';
 import type { AddonInfo, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, Picker, Sheet, Toggle } from '../components/ui';
+import { hoverPreviews } from '../components/HoverPreview';
 import { ProfilesEditor } from '../components/Profiles';
 import { copyText, useAsync, useToast } from '../lib';
 import { useStatus } from '../shell';
@@ -238,6 +239,7 @@ const number = (value: string) => (value === '' ? 0 : Number(value));
 export function SettingsPage() {
   const toast = useToast();
   const status = useStatus();
+  const [hoverTrailers, setHoverTrailers] = useState(() => hoverPreviews.enabled());
   // Opened from the profile menu: go straight to Profiles.
   useEffect(() => { if (window.location.hash === '#profiles') window.setTimeout(() => document.getElementById('profiles')?.scrollIntoView({ block: 'start' }), 400); }, []);
   const { data, error, reload, setData } = useAsync(() => api.settings(), []);
@@ -452,6 +454,7 @@ export function SettingsPage() {
               ? 'ffmpeg is installed, so MKV, x265, DTS and TrueHD files are converted on the fly. 4K is converted to 1080p when the browser can’t play it.'
               : 'Install ffmpeg on this machine to play MKV, x265 and Dolby/DTS audio in the browser. The Docker image includes it.'}</small>
           </div>
+          <SwitchRow title="Play trailers when pointing at a poster" description="With a mouse, resting on a poster opens a card with its trailer playing, muted. Saved in this browser." checked={hoverTrailers} onChange={(value) => { hoverPreviews.setEnabled(value); setHoverTrailers(value); }} />
         </Section>
 
         <Section id="profiles" title="Profiles" description="Everyone in the house can have their own Continue watching, My list and watched episodes. The library, downloads and settings are shared. With two or more, Haul asks who's watching on each browser.">
