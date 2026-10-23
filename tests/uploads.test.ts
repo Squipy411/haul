@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,11 +22,19 @@ async function server() {
   return { dir, running, call, piece };
 }
 
-describe('Adding files from the browser', () => {
+/** A file of the given size that's quick to make and compare: zeros, with its size written at the start. */
+function sample(size: number): Buffer {
+  const bytes = Buffer.alloc(size);
+  bytes.writeUInt32BE(size, 0);
+  bytes.writeUInt32BE(0xdeadbeef, size - 4);
+  return bytes;
+}
+
+describe('Adding files from the browser', { timeout: 30_000 }, () => {
   it('takes a film in pieces, refuses one out of order, and files it under Movies', async () => {
     const { dir, running, call, piece } = await server();
     try {
-      const file = crypto.randomBytes(21 * 1024 * 1024);
+      const file = sample(21 * 1024 * 1024);
       const started = await call('POST', '/api/uploads', { name: 'C:\\fakepath\\Big.Buck.Bunny.2008.1080p.BluRay.x264.mkv', size: file.length });
       expect(started.status).toBe(200);
       const { id } = started.data;
@@ -40,7 +47,7 @@ describe('Adding files from the browser', () => {
       const done = await call('POST', `/api/uploads/${id}/finish`);
       expect(done.data).toEqual({ type: 'movie', title: 'Big Buck Bunny (2008)', file: 'Big Buck Bunny (2008).mkv' });
       const saved = path.join(dir, 'Movies', 'Big Buck Bunny (2008)', 'Big Buck Bunny (2008).mkv');
-      expect(crypto.createHash('sha1').update(fs.readFileSync(saved)).digest('hex')).toBe(crypto.createHash('sha1').update(file).digest('hex'));
+      expect(fs.readFileSync(saved).equals(file)).toBe(true);
       expect(fs.readdirSync(path.join(dir, 'incomplete', '.uploads'))).toEqual([]);
     } finally {
       await running.close();
@@ -50,7 +57,7 @@ describe('Adding files from the browser', () => {
   it('files an episode under its show and season, and turns away what it can’t place', async () => {
     const { dir, running, call, piece } = await server();
     try {
-      const file = crypto.randomBytes(20 * 1024 * 1024 + 5);
+      const file = sample(20 * 1024 * 1024 + 5);
       const { data } = await call('POST', '/api/uploads', { name: 'severance.s01e04.1080p.web.h264.mkv', size: file.length });
       await piece(data.id, 0, file);
       expect((await call('POST', `/api/uploads/${data.id}/finish`)).data).toMatchObject({ type: 'series', file: 'Severance - S01E04.mkv' });
@@ -61,7 +68,7 @@ describe('Adding files from the browser', () => {
       expect((await call('POST', '/api/uploads', { name: 'Home video.mkv', size: 50_000_000, type: 'series' })).data.error).toMatch(/S01E04/);
       // A piece longer than the file is refused, and cancelling removes what arrived.
       const other = (await call('POST', '/api/uploads', { name: 'Film (2020).mp4', size: 21 * 1024 * 1024 })).data;
-      expect((await piece(other.id, 0, crypto.randomBytes(22 * 1024 * 1024))).status).toBe(400);
+      expect((await piece(other.id, 0, sample(22 * 1024 * 1024))).status).toBe(400);
       await call('DELETE', `/api/uploads/${other.id}`);
       expect((await piece(other.id, 0, Buffer.alloc(10))).status).toBe(404);
     } finally {

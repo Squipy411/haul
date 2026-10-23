@@ -1,4 +1,6 @@
-FROM node:22-alpine AS build
+# Built and tested once, on the build machine's own platform: the result is plain JavaScript that runs
+# on both amd64 and arm64, so there's no need to run the build (and its tests) under emulation.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
