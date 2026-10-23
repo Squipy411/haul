@@ -8,12 +8,16 @@ import { hoverPreviews } from './HoverPreview';
 import { Link } from '../lib';
 
 /** The product's mark: a box opening onto a play button, for a TorBox player. */
+/** An open box with a play button rising out of it: what you fetch, ready to watch. */
 export function Mark({ size = 20 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="96 96 320 320" aria-hidden="true">
-      <rect x="104" y="118" width="304" height="58" rx="20" fill="#4cb3f0" transform="rotate(-11 116 176)" />
-      <rect x="120" y="208" width="272" height="200" rx="34" fill="#ffffff" />
-      <path d="M228 260 L228 356 L312 308 Z" fill="#000000" stroke="#000000" strokeWidth="18" strokeLinejoin="round" />
+    <svg width={size} height={size} viewBox="66 60 380 380" aria-hidden="true" className="mark">
+      <path className="mark-play" d="M206 96 L206 268 L342 182 Z" fill="#4cb3f0" stroke="#4cb3f0" strokeWidth="30" strokeLinejoin="round" />
+      <g fill="#ffffff" stroke="#ffffff" strokeWidth="18" strokeLinejoin="round">
+        <path className="mark-flap left" d="M122 246 L80 190 L170 190 L206 246 Z" />
+        <path className="mark-flap right" d="M390 246 L432 190 L342 190 L306 246 Z" />
+      </g>
+      <path d="M120 262 L392 262 L392 384 Q392 420 356 420 L156 420 Q120 420 120 384 Z" fill="#ffffff" />
     </svg>
   );
 }

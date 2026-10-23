@@ -1,4 +1,4 @@
-import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, RemoteView, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
+import type { AddonInfo, Follow, FolderListing, FolderStatus, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, RemoteView, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, UploadAdded, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -105,6 +105,8 @@ export const api = {
   setupDefaults: () => request<{ moviesDir: string; tvDir: string; needsPassword: boolean }>('GET', '/api/setup/defaults'),
   setupTestTorbox: (apiKey: string) => request<TorboxAccount>('POST', '/api/setup/torbox-test', { apiKey }),
   setup: (body: SetupRequest) => request<{ ok: true; account: TorboxAccount }>('POST', '/api/setup', body),
+  folders: (path: string) => request<FolderListing>('GET', `/api/folders?path=${encodeURIComponent(path)}`),
+  folderStatus: () => request<{ folders: FolderStatus[] }>('GET', '/api/folders/status'),
   checkFolders: () => request<{ results: Array<{ dir: string; ok: boolean; error?: string }> }>('POST', '/api/settings/check-folders'),
 
   home: () => rememberAll(request<{ rows: HomeRow[] }>('GET', '/api/home'), (data) => data.rows.flatMap((row) => row.items)),
@@ -125,6 +127,9 @@ export const api = {
     request<SeasonPlan>('POST', '/api/plan/season', { imdbId, season, episodes, skipOwned }),
 
   downloads: () => request<{ jobs: Job[] }>('GET', '/api/downloads'),
+  startUpload: (body: { name: string; size: number; type?: MediaType; imdbId?: string }) => request<{ id: string; received: number }>('POST', '/api/uploads', body),
+  finishUpload: (id: string) => request<UploadAdded>('POST', `/api/uploads/${id}/finish`),
+  cancelUpload: (id: string) => request<{ ok: true }>('DELETE', `/api/uploads/${id}`),
   download: (body: { type: MediaType; imdbId: string; release?: Release; season?: number; episodes?: number[]; items?: Array<{ release: Release; season: number; episodes: number[] }> }) =>
     request<{ jobs: Job[] }>('POST', '/api/downloads', body),
   jobAction: (id: string, action: 'pause' | 'resume' | 'retry' | 'cancel') => request<{ job: Job }>('POST', `/api/downloads/${id}/${action}`),

@@ -14,3 +14,6 @@ services:
       - ./haul-data:/data
       # Your media folder. Haul writes to Movies/ and "TV Shows/" inside it (changeable in Settings).
       - /path/to/media:/media
+      # Optional: a NAS share or another drive, mounted on this machine first (for example at /mnt/nas).
+      # Add it in Haul's Settings → Folders as /drives/nas.
+      # - /mnt/nas:/drives/nas

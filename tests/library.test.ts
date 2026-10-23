@@ -41,3 +41,51 @@ describe('Library matches', () => {
     expect(library.summaries()[0]).toMatchObject({ title: 'Big Buck Bunny', year: 2008, imdbId: undefined });
   });
 });
+
+describe('Folders to play from', () => {
+  it('keeps a drive’s titles while it’s offline, and drops them once it’s taken out of Settings', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'haul-library-'));
+    dirs.push(dir);
+    const nas = path.join(dir, 'nas');
+    fs.mkdirSync(path.join(nas, 'Sintel (2010)'), { recursive: true });
+    const file = path.join(nas, 'Sintel (2010)', 'Sintel.2010.1080p.mkv');
+    fs.writeFileSync(file, '');
+    fs.truncateSync(file, 25 * 1024 * 1024);
+    const options = optionsFromEnv({ dataDir: path.join(dir, 'data'), defaults: { torboxApiKey: '', moviesDir: path.join(dir, 'Movies'), tvDir: path.join(dir, 'TV'), incompleteDir: path.join(dir, 'tmp'), publicUrl: '' } });
+    fs.mkdirSync(options.dataDir, { recursive: true });
+    const settings = new SettingsService(options);
+    settings.update({ extraLibraryDirs: [nas] });
+    const library = new Library(options, settings);
+    await library.scan();
+    expect(library.summaries().map((item) => item.title)).toEqual(['Sintel']);
+
+    // The share drops off the network: its folder can't be read.
+    fs.renameSync(nas, `${nas}-away`);
+    await library.scan();
+    expect(library.summaries().map((item) => item.title)).toEqual(['Sintel']);
+
+    settings.update({ extraLibraryDirs: [] });
+    await library.scan();
+    expect(library.summaries()).toEqual([]);
+  });
+});
+
+describe('Overlapping folders', () => {
+  it('reads Movies once when a folder to play from holds it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'haul-library-'));
+    dirs.push(dir);
+    const media = path.join(dir, 'media');
+    for (const [folder, name] of [['Movies/Up (2009)', 'Up.2009.mkv'], ['Anime/Akira (1988)', 'Akira.1988.mkv']] as const) {
+      fs.mkdirSync(path.join(media, folder), { recursive: true });
+      fs.writeFileSync(path.join(media, folder, name), '');
+      fs.truncateSync(path.join(media, folder, name), 25 * 1024 * 1024);
+    }
+    const options = optionsFromEnv({ dataDir: path.join(dir, 'data'), defaults: { torboxApiKey: '', moviesDir: path.join(media, 'Movies'), tvDir: path.join(media, 'TV'), incompleteDir: path.join(dir, 'tmp'), publicUrl: '' } });
+    fs.mkdirSync(options.dataDir, { recursive: true });
+    const settings = new SettingsService(options);
+    settings.update({ extraLibraryDirs: [media, path.join(media, 'Movies'), path.join(media, 'Anime')] });
+    const library = new Library(options, settings);
+    await library.scan();
+    expect(library.summaries().map((item) => item.title).sort()).toEqual(['Akira', 'Up']);
+  });
+});

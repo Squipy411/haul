@@ -15,6 +15,7 @@ import { SettingsService } from './settings.js';
 import { Torbox, TorboxError } from './torbox.js';
 import { Profiles } from './profiles.js';
 import { Tunnel } from './tunnel.js';
+import { Uploads } from './uploads.js';
 import * as catalog from './catalog.js';
 import { FollowService } from './follows.js';
 import { Notifier } from './notify.js';
@@ -82,7 +83,9 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   const tunnel = new Tunnel(() => listeningPort, (url) => {
     if (notifier.configured) void notifier.send({ title: 'Haul’s link from anywhere', message: url, url, priority: 3, tags: ['globe_with_meridians'] });
   });
-  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier, profiles, tunnel });
+  const uploads = new Uploads({ settings: () => settings.value, meta: catalog.meta, onAdded: (added) => library.recordUpload(added) });
+  void uploads.clearLeftovers();
+  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier, profiles, tunnel, uploads });
   const media = new MediaTools();
   const transcodes = registerPlay(router, { library, catalog, search, torbox, media, progress: (ctx) => profiles.progress(ctx), apiKey: () => settings.value.torboxApiKey });
 

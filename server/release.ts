@@ -40,7 +40,17 @@ const LANGUAGE_TOKENS: Array<[RegExp, string]> = [
   [tok('ukr|ukrainian'), 'UK'],
   [tok('por|portuguese|dublado'), 'PT'],
   [tok('pol|polish|pldub'), 'PL'],
-  [tok('tur|turkish'), 'TR']
+  [tok('tur|turkish'), 'TR'],
+  [tok('cz|cze|czech|cesky|czdab|czdub'), 'CS'],
+  [tok('hun|hungarian'), 'HU'],
+  [tok('swe|swedish'), 'SV'],
+  [tok('dutch|nldub|flemish'), 'NL'],
+  [tok('chs|cht|chinese|mandarin|cantonese'), 'ZH'],
+  [tok('ara|arabic'), 'AR'],
+  [tok('tamil'), 'TA'],
+  [tok('telugu'), 'TE'],
+  [tok('vie|vietnamese'), 'VI'],
+  [tok('tha|thai'), 'TH']
 ];
 
 function unique<T>(values: T[]): T[] {
@@ -149,6 +159,8 @@ export function parseRelease(raw: string): ReleaseInfo {
 
   const languages = unique(LANGUAGE_TOKENS.filter(([pattern]) => pattern.test(name)).map(([, label]) => label));
   if (/[а-яё]/i.test(raw) && !languages.includes('RU')) languages.push('RU');
+  if (/[ěřůť]/i.test(raw) && !languages.includes('CS')) languages.push('CS');
+  if (/[\u4e00-\u9fff]/.test(raw) && !languages.includes('ZH')) languages.push('ZH');
 
   const { seasons, episodes, complete } = parseSeasonsAndEpisodes(raw);
   return {

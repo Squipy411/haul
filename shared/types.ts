@@ -64,6 +64,12 @@ export interface Settings {
     torrentio: boolean;
     torrentioUrl: string;
     torboxSearch: boolean;
+    /** TorrentsDB: YTS, EZTV, 1337x, Nyaa and more in one free addon. */
+    torrentsdb: boolean;
+    /** The Pirate Bay's API, searched by IMDb id. */
+    piratebay: boolean;
+    /** Torznab feeds from Prowlarr or Jackett, each with its apikey. */
+    torznab: string[];
     addons: string[];
   };
   quality: {
@@ -161,6 +167,36 @@ export interface Status {
   update: { version: string; url: string } | null;
   /** One entry per disk the library and downloads use. */
   disks: DiskSpace[];
+}
+
+/** One folder's subfolders, for picking a folder in Settings. */
+export interface FolderListing {
+  /** Empty for the starting list (the usual media places). */
+  path: string;
+  parent: string | null;
+  folders: Array<{ name: string; path: string }>;
+  roots: string[];
+}
+
+export interface FolderStatus {
+  path: string;
+  role: 'movies' | 'tv' | 'downloads' | 'extra';
+  /** False for a network drive that's offline or a path that doesn't exist. */
+  reachable: boolean;
+  writable: boolean;
+  /** Not made yet: Haul creates it the first time it's needed. */
+  notYet?: boolean;
+  free?: number;
+  total?: number;
+}
+
+/** A video added from the browser, now in the library. */
+export interface UploadAdded {
+  type: MediaType;
+  /** "Title (Year)" as filed. */
+  title: string;
+  imdbId?: string;
+  file: string;
 }
 
 export interface DiskSpace {

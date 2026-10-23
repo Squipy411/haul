@@ -32,6 +32,11 @@ interface FoundVideo {
 }
 
 const MIN_VIDEO_BYTES = 20 * 1024 * 1024;
+/** The same folder, or one inside it. */
+const within = (child: string, parent: string) => {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
 const hashId = (value: string, length = 20) => crypto.createHash('sha256').update(value).digest('hex').slice(0, length);
 const normalise = (value: string) => value.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '');
 
@@ -171,13 +176,23 @@ export class Library {
 
     const scanRoot = async (root: string, kind: MediaType | 'auto') => {
       let entries;
-      try { entries = await fsp.readdir(root, { withFileTypes: true }); } catch { return; }
+      try {
+        entries = await fsp.readdir(root, { withFileTypes: true });
+      } catch {
+        // A network drive that's offline (or a USB drive unplugged) keeps its titles until it's back.
+        const inside = (folder: string) => folder === root || folder.startsWith(root.endsWith(path.sep) ? root : root + path.sep);
+        for (const item of this.items) if (inside(item.folder) && !items.some((kept) => kept.key === item.key)) items.push(item);
+        return;
+      }
       const looseSeries = new Map<string, FoundVideo[]>();
       for (const entry of entries) {
         if (entry.name.startsWith('.') || entry.name.startsWith('@')) continue;
         const full = path.join(root, entry.name);
         let isDir = entry.isDirectory();
         if (entry.isSymbolicLink()) { try { isDir = (await fsp.stat(full)).isDirectory(); } catch { continue; } }
+        // A folder to play from that holds Movies, Shows, downloads or another folder to play from:
+        // that one is read on its own terms, not taken for a title.
+        if (kind === 'auto' && isDir && separateFolders.some((other) => path.resolve(other) !== path.resolve(root) && within(other, full))) continue;
         if (isDir) {
           const videos = await listVideos(full);
           if (!videos.length) continue;
@@ -203,9 +218,15 @@ export class Library {
       for (const [title, videos] of looseSeries) addItem('series', `series:${root}#${title}`, root, title, undefined, videos);
     };
 
+    const ownFolders = [settings.moviesDir, settings.tvDir, settings.incompleteDir];
+    const separateFolders = [...ownFolders, ...settings.extraLibraryDirs];
     await scanRoot(settings.moviesDir, 'movie');
     await scanRoot(settings.tvDir, 'series');
-    for (const dir of settings.extraLibraryDirs) await scanRoot(dir, 'auto');
+    // Skipped when it's inside Movies or Shows (already read) or listed twice.
+    for (const [index, dir] of settings.extraLibraryDirs.entries()) {
+      if (ownFolders.some((own) => within(dir, own)) || settings.extraLibraryDirs.slice(0, index).some((other) => path.resolve(other) === path.resolve(dir))) continue;
+      await scanRoot(dir, 'auto');
+    }
 
     this.file.data.items = items;
     this.file.data.scannedAt = Date.now();
@@ -268,6 +289,13 @@ export class Library {
     }
     this.file.save();
     this.scheduleScan(1500);
+  }
+
+  /** A video added from the browser: when it was dropped on a title, that title is the match. */
+  recordUpload(added: { type: MediaType; folder: string; imdbId?: string; title: string; year?: number }): void {
+    if (added.imdbId) this.file.data.matches[`${added.type}:${added.folder}`] = { imdbId: added.imdbId, source: 'haul', title: added.title, year: added.year, checkedAt: Date.now() };
+    this.file.save();
+    this.scheduleScan(500);
   }
 
   async setMatch(itemId: string, imdbId: string | null): Promise<LibraryItem | undefined> {

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { LibrarySummary, MetaPreview, WatchProgress, WatchlistItem } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Loading, Poster, PosterCard, Sheet, TabBar } from '../components/ui';
+import { AddFilesButton } from '../components/Uploads';
 import { Link, ago, bytes, copyText, count, pad, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
 
 function AddonCard() {
@@ -159,6 +160,12 @@ export function LibraryPage() {
   const [query, setQuery] = useState('');
   const [fixing, setFixing] = useState<LibrarySummary | null>(null);
   usePolling(() => { api.library().then(setData, () => undefined); }, 3000, Boolean(data?.scanning));
+  // A file added from the browser shows up once the rescan it starts has run.
+  useEffect(() => {
+    const later = () => window.setTimeout(() => api.library().then(setData, () => undefined), 1500);
+    window.addEventListener('haul:library-changed', later);
+    return () => window.removeEventListener('haul:library-changed', later);
+  }, [setData]);
 
   const all = data?.items ?? [];
   const shows = all.filter((item) => item.type === 'series');
@@ -173,9 +180,12 @@ export function LibraryPage() {
           <h1>My library</h1>
           {data && <div className="sub num">{count(shows.length, 'show')} · {count(movies.length, 'movie')} · {bytes(all.reduce((sum, item) => sum + item.size, 0))} · checked {ago(data.scannedAt)}</div>}
         </div>
-        <button className="btn" disabled={data?.scanning} onClick={async () => { await api.scanLibrary(); toast('Checking your folders for new files'); setTimeout(reload, 1200); }}>
-          {data?.scanning ? <><span className="spinner" />Checking</> : 'Check folders'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <AddFilesButton />
+          <button className="btn" disabled={data?.scanning} onClick={async () => { await api.scanLibrary(); toast('Checking your folders for new files'); setTimeout(reload, 1200); }}>
+            {data?.scanning ? <><span className="spinner" />Checking</> : 'Check folders'}
+          </button>
+        </div>
       </div>
       {error && <ErrorNote message={error} onRetry={reload} />}
       {!data && !error && <Loading />}
@@ -190,7 +200,7 @@ export function LibraryPage() {
               </div>
               {!items.length && (
                 <Empty title={query ? 'Nothing matches' : `No ${tab === 'series' ? 'shows' : 'movies'} yet`}>
-                  {query ? 'Try another name.' : 'Downloads land here. Folders you already had appear after the next check.'}
+                  {query ? 'Try another name.' : 'Downloads land here. Folders you already had appear after the next check, and you can drag videos onto this page to add them.'}
                 </Empty>
               )}
               <div className="grid" style={{ marginTop: 16 }}>

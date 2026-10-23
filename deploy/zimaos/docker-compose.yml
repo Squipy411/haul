@@ -16,6 +16,13 @@ services:
       - type: bind
         source: /DATA/Media
         target: /media
+      # Network shares, USB drives and cloud drives that ZimaOS connects appear under /media on the host.
+      # One connected after Haul started shows up once Haul restarts.
+      - type: bind
+        source: /media
+        target: /drives
+        bind:
+          create_host_path: true
     logging:
       driver: json-file
       options:
@@ -33,6 +40,9 @@ services:
         - container: /media
           description:
             en_US: Your media folder (Movies and TV Shows are written here)
+        - container: /drives
+          description:
+            en_US: Network shares and USB drives connected in ZimaOS (add them in Haul's Settings → Folders)
 x-casaos:
   architectures:
     - amd64

@@ -2,7 +2,7 @@
 
 <img src="web/public/icon.png" width="56" align="right" alt="" />
 
-A self-hosted player and downloader for your [TorBox](https://torbox.app) account. Press play on any film or episode and Haul streams it straight from TorBox, or plays your own copy if you have one. When you want to keep something, pick a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your machine, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
+Your own streaming site, self-hosted. Press play on any film or episode and Haul streams it straight from your [TorBox](https://torbox.app) account, or plays your own copy if you have one: from your downloads, a second drive, a NAS share, or a video you dragged onto the page. Open it in a browser at home or, with a free Cloudflare link, from anywhere. When you want to keep something, pick a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your machine, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
 
 It replaces a Sonarr + Radarr + Seerr + download-client stack for people who just want to choose what to download. Nothing is torrented on your own machine: TorBox fetches the torrent, Haul pulls the finished files over HTTPS.
 
@@ -17,6 +17,8 @@ You need a TorBox account and either Docker or a Windows PC.
 - **Save, catch up, look ahead.** Press **My list** on anything to keep it for later (a row on Home and a tab in My library). Watch the **trailer** without leaving Haul, or just rest the mouse on a poster: a card opens with the trailer playing, muted (turn it off in Settings → Watching). Mark an episode, a whole season or a film as watched in one go, and Continue watching picks up after it.
 - **Built like a streaming site.** A featured hero on Home, rows for what you're watching, new episodes of your shows and your own library, Shows and Movies to browse by genre, and title pages where episodes show what you've watched. Downloading lives one tab away.
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
+- **Bring your own files.** Drag videos onto Haul (or press **Add files** in My library) and they're filed under Movies or TV Shows with proper names; drop one on a film's page and it's filed as that film. Big files go up in pieces, so they get through Cloudflare and a dropped connection only resends the piece it was on.
+- **Play from other folders and network drives.** Add a second drive, a NAS share or a USB drive in Settings → Folders by browsing for it. On ZimaOS, shares and drives you connect in the Files app are under `/drives` (one connected after Haul started appears once Haul restarts). Settings shows which folders are reachable, and if a share goes offline its titles stay listed until it's back.
 - **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
 - **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. Largest files are listed first (switch to best match or most seeders if you like). From a multi-season pack, only the season you asked for is downloaded.
 - **Get a whole show** with one button: Haul plans every season you're missing and downloads them together.
@@ -215,7 +217,7 @@ Found a problem? Open an issue, or for anything sensitive, contact the maintaine
 
 ## Sources
 
-Torrentio is on by default. TorBox's own search is used when it answers, and you can add any Stremio addon that returns torrents (Comet or MediaFusion without debrid, for example). Results are merged, de-duplicated and checked against the TorBox cache in one request.
+Torrentio, TorBox's own search and [TorrentsDB](https://torrentsdb.com) (YTS, EZTV, 1337x, TorrentCSV, Nyaa and more) are on by default. In Settings → Where to look you can also turn on The Pirate Bay (its uploads tagged with the title's IMDb page, often whole-season packs), add your own **Prowlarr or Jackett** indexers by pasting their Torznab feed address, and add any Stremio addon that returns torrents (Comet or MediaFusion without debrid, for example). Results are merged, de-duplicated and checked against the TorBox cache in one request. Single-language uploads (Czech, Hungarian, Chinese and others) rank below English and multi-language ones.
 
 ## Development
 

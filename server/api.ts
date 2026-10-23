@@ -5,6 +5,8 @@ import type { Meta, MediaType, NewEpisodes, Release, RemoteView, SettingsPatch, 
 import { addonUrls } from './addon.js';
 import type { Profiles } from './profiles.js';
 import { type Tunnel, findCloudflared } from './tunnel.js';
+import type { Uploads } from './uploads.js';
+import { folderStatus, listFolder } from './folders.js';
 import { type Auth, clientIp, describeDevice, isFromInternet, isHttps, validPassword } from './auth.js';
 import { checkCode, newSecret, otpauthUrl } from './totp.js';
 import * as catalog from './catalog.js';
@@ -35,6 +37,7 @@ interface Deps {
   notifier: Notifier;
   profiles: Profiles;
   tunnel: Tunnel;
+  uploads: Uploads;
 }
 
 /** Routes that answer before sign-in. Setup routes also check that setup is actually open. */
@@ -63,7 +66,7 @@ function aired(released?: string): boolean {
 }
 
 export function registerApi(router: Router, deps: Deps): void {
-  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, profiles, tunnel } = deps;
+  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, profiles, tunnel, uploads } = deps;
 
   const withOwnership = (meta: Meta): Meta => {
     if (meta.type === 'series') {
@@ -562,6 +565,28 @@ export function registerApi(router: Router, deps: Deps): void {
 
   // --- Library ----------------------------------------------------------------
   router.get('/api/library', (ctx) => ctx.json(200, { items: library.summaries(), scanning: library.isScanning, scannedAt: library.scannedAt }));
+
+  // --- Folders: pick one by browsing, and see which are reachable --------------------------
+  const configuredFolders = () => {
+    const value = settings.value;
+    return [
+      { path: value.moviesDir, role: 'movies' as const },
+      { path: value.tvDir, role: 'tv' as const },
+      { path: value.incompleteDir, role: 'downloads' as const },
+      ...value.extraLibraryDirs.map((dir) => ({ path: dir, role: 'extra' as const }))
+    ];
+  };
+  router.get('/api/folders', async (ctx) => ctx.json(200, await listFolder(ctx.query.get('path') ?? '', configuredFolders().map((folder) => folder.path))));
+  router.get('/api/folders/status', async (ctx) => ctx.json(200, { folders: await folderStatus(configuredFolders()) }));
+
+  // --- Adding files from the browser ---------------------------------------------------
+  router.post('/api/uploads', async (ctx) => ctx.json(200, await uploads.start(await ctx.body())));
+  router.put('/api/uploads/:id', async (ctx) => {
+    const result = await uploads.write(ctx.params.id!, Number(ctx.query.get('offset')), ctx.req);
+    ctx.json(result.resumeFrom !== undefined ? 409 : 200, result);
+  });
+  router.post('/api/uploads/:id/finish', async (ctx) => ctx.json(200, await uploads.finish(ctx.params.id!)));
+  router.delete('/api/uploads/:id', async (ctx) => { await uploads.cancel(ctx.params.id!); ctx.json(200, { ok: true }); });
 
   router.post('/api/library/scan', async (ctx) => {
     void library.scan();

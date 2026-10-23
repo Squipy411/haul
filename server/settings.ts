@@ -39,6 +39,9 @@ function defaults(options: ServerOptions): StoredSettings {
       torrentio: true,
       torrentioUrl: 'https://torrentio.strem.fun',
       torboxSearch: true,
+      torrentsdb: true,
+      piratebay: false,
+      torznab: [],
       addons: []
     },
     quality: {
@@ -175,6 +178,9 @@ export class SettingsService {
       const sources = patch.sources;
       if (typeof sources.torrentio === 'boolean') data.sources.torrentio = sources.torrentio;
       if (typeof sources.torboxSearch === 'boolean') data.sources.torboxSearch = sources.torboxSearch;
+      if (typeof sources.torrentsdb === 'boolean') data.sources.torrentsdb = sources.torrentsdb;
+      if (typeof sources.piratebay === 'boolean') data.sources.piratebay = sources.piratebay;
+      if (Array.isArray(sources.torznab)) data.sources.torznab = sources.torznab.map(cleanUrl).filter((url) => /^https?:\/\//.test(url));
       if (sources.torrentioUrl !== undefined) data.sources.torrentioUrl = cleanUrl(sources.torrentioUrl).replace(/\/manifest\.json$/, '') || 'https://torrentio.strem.fun';
       if (Array.isArray(sources.addons)) data.sources.addons = sources.addons.map(cleanUrl).filter((url) => /^https?:\/\//.test(url));
     }

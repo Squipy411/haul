@@ -1,6 +1,6 @@
 import type { PackFile, Release, ReleaseKind, SeasonPlan, SeasonPlanItem, Settings } from '../shared/types.js';
 import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile, parseRelease, resolutionRank } from './release.js';
-import { type RawResult, stremioSource, torboxSearch } from './sources.js';
+import { type RawResult, TORRENTSDB_URL, pirateBaySource, stremioSource, torboxSearch, torznabSource } from './sources.js';
 import type { CachedTorrent, Torbox } from './torbox.js';
 
 type Quality = Settings['quality'];
@@ -122,6 +122,9 @@ export class SearchService {
       jobs.push(stremioSource(addon, type, stremioId, origin));
     }
     if (settings.sources.torboxSearch) jobs.push(torboxSearch(settings.torboxApiKey, imdbId, season, episode));
+    if (settings.sources.torrentsdb) jobs.push(stremioSource(TORRENTSDB_URL, type, stremioId, 'TorrentsDB'));
+    if (settings.sources.piratebay) jobs.push(pirateBaySource(imdbId));
+    for (const feed of settings.sources.torznab) jobs.push(torznabSource(feed, type, imdbId, season, episode));
     const settled = await Promise.allSettled(jobs);
     const merged = new Map<string, RawResult>();
     for (const outcome of settled) {

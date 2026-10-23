@@ -3,6 +3,7 @@ import { encode } from 'uqr';
 import type { AddonInfo, RemoteView, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, Picker, Sheet, Toggle } from '../components/ui';
+import { FolderHealth, FolderPicker } from '../components/FolderPicker';
 import { hoverPreviews } from '../components/HoverPreview';
 import { ProfilesEditor } from '../components/Profiles';
 import { copyText, useAsync, useToast } from '../lib';
@@ -328,6 +329,7 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [notifying, setNotifying] = useState(false);
   const [folders, setFolders] = useState<Array<{ dir: string; ok: boolean; error?: string }> | null>(null);
+  const [picking, setPicking] = useState<{ field: 'moviesDir' | 'tvDir' | 'incompleteDir' | 'extraLibraryDirs'; title: string } | null>(null);
   const [addon, setAddon] = useState<AddonInfo | null>(null);
   const [player, setPlayer] = useState<{ ffmpeg: boolean } | null>(null);
 
@@ -407,17 +409,30 @@ export function SettingsPage() {
           </Field>
         </Section>
 
-        <Section title="Folders" description="Where films and episodes are saved. In Docker these paths are inside the container, usually under /media.">
+        <Section title="Folders" description="Where films and episodes are saved, and other folders to play from: a second drive, a NAS share, USB drives. In Docker these paths are inside the container, usually under /media; on ZimaOS, connected network shares and USB drives are under /drives.">
           <div className="two">
-            <Field id="dir-movies" label="Movies"><input id="dir-movies" className="input code" value={draft.moviesDir} onChange={(event) => set((value) => ({ ...value, moviesDir: event.target.value }))} /></Field>
-            <Field id="dir-tv" label="Shows"><input id="dir-tv" className="input code" value={draft.tvDir} onChange={(event) => set((value) => ({ ...value, tvDir: event.target.value }))} /></Field>
+            <Field id="dir-movies" label="Movies"><div className="input-pick"><input id="dir-movies" className="input code" value={draft.moviesDir} onChange={(event) => set((value) => ({ ...value, moviesDir: event.target.value }))} /><button className="btn sm" onClick={() => setPicking({ field: 'moviesDir', title: 'Folder for movies' })}>Choose</button></div></Field>
+            <Field id="dir-tv" label="Shows"><div className="input-pick"><input id="dir-tv" className="input code" value={draft.tvDir} onChange={(event) => set((value) => ({ ...value, tvDir: event.target.value }))} /><button className="btn sm" onClick={() => setPicking({ field: 'tvDir', title: 'Folder for shows' })}>Choose</button></div></Field>
           </div>
           <Field id="dir-incomplete" label="Downloads in progress" hint="Keep it on the same drive as your library so finished files move instantly.">
-            <input id="dir-incomplete" className="input code" value={draft.incompleteDir} onChange={(event) => set((value) => ({ ...value, incompleteDir: event.target.value }))} />
+            <div className="input-pick"><input id="dir-incomplete" className="input code" value={draft.incompleteDir} onChange={(event) => set((value) => ({ ...value, incompleteDir: event.target.value }))} /><button className="btn sm" onClick={() => setPicking({ field: 'incompleteDir', title: 'Folder for downloads in progress' })}>Choose</button></div>
           </Field>
-          <Field id="dir-extra" label="Other folders to include" hint="They appear in your library and the Nuvio addon. Haul never writes to them.">
-            <ListEditor id="dir-extra" values={draft.extraLibraryDirs} onChange={(extraLibraryDirs) => set((value) => ({ ...value, extraLibraryDirs }))} placeholder="/media/Anime" />
+          <Field id="dir-extra" label="Other folders to play from" hint="Films and shows in them appear in your library and the Nuvio addon; Haul works out which is which. Haul never writes to them. If a network drive goes offline, its titles stay listed until it's back.">
+            <ListEditor id="dir-extra" values={draft.extraLibraryDirs} onChange={(extraLibraryDirs) => set((value) => ({ ...value, extraLibraryDirs }))} placeholder="/drives/NAS/Movies" />
+            <div><button className="btn sm" onClick={() => setPicking({ field: 'extraLibraryDirs', title: 'Add a folder to play from' })}>Browse for a folder</button></div>
           </Field>
+          <FolderHealth refreshKey={data} />
+          <FolderPicker
+            open={picking !== null}
+            onOpenChange={(value) => { if (!value) setPicking(null); }}
+            title={picking?.title ?? ''}
+            start={picking && picking.field !== 'extraLibraryDirs' ? draft[picking.field] : undefined}
+            onPick={(picked) => {
+              const field = picking?.field;
+              if (field === 'extraLibraryDirs') set((value) => ({ ...value, extraLibraryDirs: value.extraLibraryDirs.includes(picked) ? value.extraLibraryDirs : [...value.extraLibraryDirs, picked] }));
+              else if (field) set((value) => ({ ...value, [field]: picked }));
+            }}
+          />
           <div className="row" style={{ flexWrap: 'wrap' }}>
             <button className="btn sm" onClick={async () => setFolders((await api.checkFolders()).results)}>Test write access</button>
             {folders && (folders.every((folder) => folder.ok)
@@ -459,6 +474,11 @@ export function SettingsPage() {
             </Field>
           )}
           <SwitchRow title="TorBox search" description="TorBox's own index, using your key." checked={draft.sources.torboxSearch} onChange={(torboxSearch) => set((value) => ({ ...value, sources: { ...value.sources, torboxSearch } }))} />
+          <SwitchRow title="TorrentsDB" description="YTS, EZTV, 1337x, TorrentCSV, Nyaa and more in one free index. No account needed." checked={draft.sources.torrentsdb} onChange={(torrentsdb) => set((value) => ({ ...value, sources: { ...value.sources, torrentsdb } }))} />
+          <SwitchRow title="The Pirate Bay" description="Its uploads tagged with the title's IMDb page, often whole-season packs." checked={draft.sources.piratebay} onChange={(piratebay) => set((value) => ({ ...value, sources: { ...value.sources, piratebay } }))} />
+          <Field id="s-torznab" label="Prowlarr or Jackett" hint={<>Your own indexers, searched by IMDb id. In Prowlarr, open an indexer and copy its Torznab feed address; in Jackett, press Copy Torznab Feed (the <code>all</code> feed covers every indexer). Include the apikey.</>}>
+            <ListEditor id="s-torznab" values={draft.sources.torznab} onChange={(torznab) => set((value) => ({ ...value, sources: { ...value.sources, torznab } }))} placeholder="http://prowlarr:9696/1/api?apikey=…" />
+          </Field>
           <Field id="s-addons" label="Other Stremio addons" hint="Any addon that lists torrents, such as Comet or MediaFusion without debrid. Paste its manifest address.">
             <ListEditor id="s-addons" values={draft.sources.addons} onChange={(addons) => set((value) => ({ ...value, sources: { ...value.sources, addons } }))} placeholder="https://…/manifest.json" />
           </Field>

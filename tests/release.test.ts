@@ -90,3 +90,12 @@ describe('parseTitleYear', () => {
     expect(parseTitleYear(raw)).toEqual({ title, year });
   });
 });
+
+describe('foreign-only releases', () => {
+  it('spots Czech, Chinese and other single-language uploads', () => {
+    expect(parseRelease('Hra o trůny / Game of Thrones (2011–2019)[WebRip][1080p](HEVC)(CZ)').languages).toContain('CS');
+    expect(parseRelease('权力的游戏 Game.of.Thrones.S01E01.1080p').languages).toContain('ZH');
+    expect(parseRelease('Game.of.Thrones.S01E01.1080p.HUN.WEB-DL').languages).toEqual(['HU']);
+    expect(parseRelease('Game.of.Thrones.S01E01.1080p.BluRay.x264-DEMAND').languages).toEqual([]);
+  });
+});
