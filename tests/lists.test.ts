@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { startServer } from '../server/main';
+import { PROFILE_AVATARS } from '../shared/profiles';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
@@ -70,6 +71,10 @@ describe('Profiles', () => {
 
       const kid = (await call('POST', '/api/profiles', { name: '  Sam  ' })).data;
       expect(kid.name).toBe('Sam');
+      // A new profile gets a picture from the set; only pictures from the set are kept, and none means the initial.
+      expect(PROFILE_AVATARS).toContain(kid.avatar);
+      expect((await call('PUT', `/api/profiles/${kid.id}`, { avatar: 'robot' })).data.avatar).toBe('robot');
+      expect((await call('PUT', `/api/profiles/${kid.id}`, { avatar: '<svg onload=x>' })).data.avatar).toBeUndefined();
       expect((await call('GET', '/api/status')).data).toMatchObject({ profileChosen: false });
       const asKid = (await call('POST', '/api/profiles/select', { id: kid.id })).cookie;
       expect(asKid).toBe(`haul_profile=${kid.id}`);

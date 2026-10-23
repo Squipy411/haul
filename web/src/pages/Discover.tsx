@@ -1,6 +1,7 @@
 import { Download, Info, Play, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { Job, MetaPreview, WatchProgress } from '../../../shared/types';
+import { jobProgress } from '../../../shared/jobs';
 import { api, preparePlay, rememberPreview } from '../api';
 import { ListButton, TrailerButton } from '../components/Extras';
 import { Hero } from '../components/Hero';
@@ -9,11 +10,6 @@ import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib'
 
 const CATALOG_ID: Record<string, string> = { top: 'top', new: 'year', featured: 'imdbRating' };
 
-function jobProgress(job: Job): { value: number; remote: boolean } {
-  const total = job.files.reduce((sum, file) => sum + file.size, 0);
-  if (job.files.length && total) return { value: job.files.reduce((sum, file) => sum + Math.min(file.downloaded, file.size), 0) / total, remote: false };
-  return { value: job.torbox.progress ?? 0, remote: true };
-}
 
 function Transfers({ jobs }: { jobs: Job[] }) {
   const active = jobs.filter((job) => ['queued', 'torbox', 'downloading', 'paused'].includes(job.status));
@@ -39,7 +35,7 @@ function Transfers({ jobs }: { jobs: Job[] }) {
                   {job.status === 'torbox' ? join([label, `TorBox is fetching it, ${Math.round(progress.value * 100)}%`])
                     : job.status === 'queued' ? join([label, 'Waiting for TorBox'])
                       : job.status === 'paused' ? join([label, 'Paused'])
-                        : join([label, `${bytes(total * progress.value)} of ${bytes(total)}`, left ? `${duration(left)} left` : ''])}
+                        : join([label, `${bytes(total * progress.value)} of ${bytes(total)}`, duration(left) ? `${duration(left)} left` : ''])}
                 </div>
                 <div className={`bar ${progress.remote ? 'remote' : ''}`}><i style={{ width: `${Math.round(progress.value * 100)}%` }} /></div>
               </div>

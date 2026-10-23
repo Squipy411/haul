@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PROFILE_COLORS } from '../shared/profiles.js';
+import { PROFILE_AVATARS, PROFILE_COLORS } from '../shared/profiles.js';
 import type { Profile } from '../shared/types.js';
 import { isHttps } from './auth.js';
 import type { Context } from './http.js';
@@ -68,19 +68,20 @@ export class Profiles {
     return profile;
   }
 
-  create(name: unknown, color: unknown): Profile {
+  create(name: unknown, color: unknown, avatar?: unknown): Profile {
     if (this.list().length >= MAX_PROFILES) throw new HttpError(400, `Haul has room for ${MAX_PROFILES} profiles.`);
-    const profile: Profile = { id: crypto.randomBytes(6).toString('base64url'), name: cleanName(name), color: cleanColor(color, this.list().length), createdAt: Date.now() };
+    const profile: Profile = { id: crypto.randomBytes(6).toString('base64url'), name: cleanName(name), color: cleanColor(color, this.list().length), avatar: cleanAvatar(avatar) ?? PROFILE_AVATARS[(this.list().length * 5) % PROFILE_AVATARS.length], createdAt: Date.now() };
     this.file.data.profiles.push(profile);
     this.file.save();
     return profile;
   }
 
-  update(id: string, change: { name?: unknown; color?: unknown }): Profile {
+  update(id: string, change: { name?: unknown; color?: unknown; avatar?: unknown }): Profile {
     const profile = this.list().find((entry) => entry.id === id);
     if (!profile) throw new HttpError(404, 'No such profile');
     if (change.name !== undefined) profile.name = cleanName(change.name);
     if (change.color !== undefined) profile.color = cleanColor(change.color, 0);
+    if (change.avatar !== undefined) profile.avatar = cleanAvatar(change.avatar);
     this.file.save();
     return profile;
   }
@@ -107,6 +108,11 @@ function cleanName(value: unknown): string {
   const name = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, 24) : '';
   if (!name) throw new HttpError(400, 'Give the profile a name.');
   return name;
+}
+
+/** One of the set, or none (the initial). */
+function cleanAvatar(value: unknown): string | undefined {
+  return typeof value === 'string' && PROFILE_AVATARS.includes(value) ? value : undefined;
 }
 
 function cleanColor(value: unknown, index: number): string {

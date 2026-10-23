@@ -88,7 +88,7 @@ export const api = {
   remote: () => request<RemoteView>('GET', '/api/remote'),
   setRemote: (body: { mode: 'off' | 'quick' | 'token'; token?: string; hostname?: string }) => request<RemoteView>('POST', '/api/remote', body),
   addProfile: (name: string, color?: string) => request<Profile>('POST', '/api/profiles', { name, color }),
-  updateProfile: (id: string, change: { name?: string; color?: string }) => request<Profile>('PUT', `/api/profiles/${id}`, change),
+  updateProfile: (id: string, change: { name?: string; color?: string; avatar?: string | null }) => request<Profile>('PUT', `/api/profiles/${id}`, change),
   removeProfile: (id: string) => request<{ ok: true }>('DELETE', `/api/profiles/${id}`),
   selectProfile: (id: string) => request<Profile>('POST', '/api/profiles/select', { id }),
   history: () => request<{ items: WatchProgress[] }>('GET', '/api/progress/history'),
@@ -158,6 +158,7 @@ export const api = {
     headers: { 'X-Haul-Request': '1', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).catch(() => undefined),
-  calendar: () => request<{ url: string; webcalUrl: string }>('GET', '/api/calendar'),
-  regenerateCalendar: () => request<{ url: string; webcalUrl: string }>('POST', '/api/calendar/regenerate')
+  calendar: () => request<{ url: string; webcalUrl: string; mode: 'found' | 'aired' }>('GET', '/api/calendar'),
+  setCalendarMode: (mode: 'found' | 'aired') => request<{ url: string; webcalUrl: string; mode: 'found' | 'aired' }>('POST', '/api/calendar/mode', { mode }),
+  regenerateCalendar: () => request<{ url: string; webcalUrl: string; mode: 'found' | 'aired' }>('POST', '/api/calendar/regenerate')
 };

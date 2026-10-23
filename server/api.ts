@@ -17,6 +17,7 @@ import type { SettingsService } from './settings.js';
 import type { Torbox } from './torbox.js';
 import { cleanFilter, type FollowService } from './follows.js';
 import { scheduleCalendar } from './calendar.js';
+import { jobProgress } from '../shared/jobs.js';
 import { DiskMonitor } from './disk.js';
 import type { Notifier } from './notify.js';
 import type { UpdateChecker } from './updates.js';
@@ -96,11 +97,24 @@ export function registerApi(router: Router, deps: Deps): void {
       // Signed-out visitors learn nothing about the library or queue.
       activeDownloads: authenticated ? jobs.activeCount() : 0,
       transferSpeed: authenticated ? jobs.jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0) : 0,
+      nowDownloading: authenticated ? nowDownloading() : null,
       libraryCounts: authenticated ? library.counts() : { movies: 0, series: 0, episodes: 0 },
       desktop: options.desktop,
       update: authenticated ? updates.available : null,
       disks: authenticated ? await disks.read([{ label: 'Movies', dir: value.moviesDir }, { label: 'Shows', dir: value.tvDir }, { label: 'Downloads in progress', dir: value.incompleteDir }]) : []
     };
+  };
+
+  /** The download furthest along: one coming to this machine first, then one TorBox is fetching. */
+  const nowDownloading = (): Status['nowDownloading'] => {
+    const ranked = jobs.jobs
+      .filter((job) => job.status === 'downloading' || job.status === 'torbox')
+      .map((job) => ({ job, progress: jobProgress(job) }))
+      .sort((a, b) => Number(b.job.status === 'downloading') - Number(a.job.status === 'downloading') || b.progress.value - a.progress.value);
+    const top = ranked[0];
+    if (!top) return null;
+    const { job, progress } = top;
+    return { id: job.id, type: job.type, imdbId: job.imdbId, title: job.title, label: job.label, poster: job.poster, progress: progress.value, remote: progress.remote, speed: job.status === 'downloading' ? job.speed : 0 };
   };
 
   router.get('/api/status', async (ctx) => ctx.json(200, await status(ctx), { 'Cache-Control': 'no-store' }));
@@ -380,7 +394,7 @@ export function registerApi(router: Router, deps: Deps): void {
   router.get('/api/profiles', (ctx) => ctx.json(200, { profiles: profiles.list(), current: profiles.current(ctx).id }));
   router.post('/api/profiles', async (ctx) => {
     const body = await ctx.body();
-    ctx.json(200, profiles.create(body.name, body.color));
+    ctx.json(200, profiles.create(body.name, body.color, body.avatar));
   });
   router.post('/api/profiles/select', async (ctx) => {
     const body = await ctx.body();
@@ -388,7 +402,7 @@ export function registerApi(router: Router, deps: Deps): void {
   });
   router.put('/api/profiles/:id', async (ctx) => {
     const body = await ctx.body();
-    ctx.json(200, profiles.update(ctx.params.id!, { name: body.name, color: body.color }));
+    ctx.json(200, profiles.update(ctx.params.id!, { name: body.name, color: body.color, avatar: body.avatar }));
   });
   router.delete('/api/profiles/:id', (ctx) => {
     profiles.remove(ctx.params.id!);
@@ -523,15 +537,20 @@ export function registerApi(router: Router, deps: Deps): void {
   // A calendar app can't sign in, so the feed lives outside /api behind its own private token.
   const calendarUrls = (ctx: Context) => {
     const url = `${settings.value.addon.publicUrl || ctx.baseUrl}/calendar/${settings.value.calendarToken}/haul.ics`;
-    return { url, webcalUrl: url.replace(/^https?:\/\//, 'webcal://') };
+    return { url, webcalUrl: url.replace(/^https?:\/\//, 'webcal://'), mode: settings.value.calendarMode };
   };
+  router.post('/api/calendar/mode', async (ctx) => {
+    const body = await ctx.body();
+    settings.setCalendarMode(body.mode === 'aired' ? 'aired' : 'found');
+    ctx.json(200, calendarUrls(ctx));
+  });
   router.get('/api/calendar', (ctx) => ctx.json(200, calendarUrls(ctx)));
   router.post('/api/calendar/regenerate', (ctx) => { settings.regenerateCalendarToken(); ctx.json(200, calendarUrls(ctx)); });
   router.get('/calendar/:token/haul.ics', async (ctx) => {
     const given = Buffer.from(ctx.params.token ?? '');
     const expected = Buffer.from(settings.value.calendarToken);
     if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return ctx.json(404, { error: 'Not found' });
-    const body = scheduleCalendar(await follows.schedule(jobs.jobs), settings.value.addon.publicUrl || ctx.baseUrl);
+    const body = scheduleCalendar(await follows.schedule(jobs.jobs), settings.value.addon.publicUrl || ctx.baseUrl, new Date(), settings.value.calendarMode);
     ctx.res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Length': String(Buffer.byteLength(body)), 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="haul.ics"' });
     ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
   });

@@ -1,11 +1,11 @@
 import { Command } from 'cmdk';
-import { CalendarDays, ChevronLeft, Download, Ellipsis, Film, House, Library as LibraryIcon, Search, Settings as SettingsIcon, Tv } from 'lucide-react';
+import { CalendarDays, ChevronLeft, Download, Ellipsis, Film, House, Library as LibraryIcon, PanelLeftClose, PanelLeftOpen, Search, Settings as SettingsIcon, Tv } from 'lucide-react';
 import { DropdownMenu, Tooltip } from 'radix-ui';
-import { type ReactNode, Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
 import { HoverPreviewLayer } from './components/HoverPreview';
-import { ProfileMenu, ProfilePicker } from './components/Profiles';
+import { Avatar, ProfileMenu, ProfilePicker } from './components/Profiles';
 import { Figure, Loading, Mark } from './components/ui';
 import { Link, bytes, count, speed, usePolling, useRouter } from './lib';
 import { CrumbContext, SearchContext, StatusContext, setTransferTitle, usePageTitle } from './shell';
@@ -96,6 +96,98 @@ function DiskMeter({ status }: { status: Status }) {
   );
 }
 
+/** The download furthest along, with its progress, so it's in view from every page. */
+function NowDownloading({ status }: { status: Status }) {
+  const job = status.nowDownloading;
+  if (!job) return null;
+  const more = status.activeDownloads - 1;
+  const percent = Math.round(job.progress * 100);
+  return (
+    <Link to="/downloads" className="side-download" title={`${job.title}: ${percent}%`}>
+      <span className="side-download-thumb">{job.poster && <img src={job.poster} alt="" />}</span>
+      <span className="side-download-text">
+        <span className="row" style={{ gap: 6 }}><b className="truncate grow">{job.title}</b>{more > 0 && <span className="side-download-more num" title={`${more} more downloading`}>+{more}</span>}</span>
+        <span className="faint truncate num">{job.remote ? `At TorBox · ${percent}%` : job.speed > 0 ? `${percent}% · ${speed(job.speed)}` : `${percent}%`}</span>
+      </span>
+      <span className={`side-download-bar ${job.remote ? 'remote' : ''}`}><i style={{ width: `${percent}%` }} /></span>
+    </Link>
+  );
+}
+
+function readCollapsed(): boolean {
+  try { return localStorage.getItem('haul.sidebar') === 'collapsed'; } catch { return false; }
+}
+
+/** Two groups with a highlight that slides to the page you're on; folds down to icons. */
+function Sidebar({ status, path }: { status: Status; path: string }) {
+  const { navigate } = useRouter();
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const nav = useRef<HTMLElement>(null);
+  const [pill, setPill] = useState<{ top: number; height: number } | null>(null);
+  const active = status.activeDownloads;
+
+  useEffect(() => {
+    document.documentElement.dataset.sidebar = collapsed ? 'collapsed' : 'open';
+    try { localStorage.setItem('haul.sidebar', collapsed ? 'collapsed' : 'open'); } catch { /* storage blocked */ }
+  }, [collapsed]);
+  useLayoutEffect(() => {
+    const item = nav.current?.querySelector<HTMLElement>('.nav-item.active');
+    setPill(item ? { top: item.offsetTop, height: item.offsetHeight } : null);
+  }, [path, collapsed]);
+
+  const groups = [
+    { id: 'watch', label: 'Watch' },
+    { id: 'manage', label: 'Manage' }
+  ] as const;
+  return (
+    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <Link to="/" className="wordmark" aria-label="Haul, TorBox player"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></Link>
+      <nav className="nav" aria-label="Main" ref={nav}>
+        {pill && <span className="nav-pill" aria-hidden="true" style={{ transform: `translateY(${pill.top}px)`, height: pill.height }} />}
+        {groups.map((group) => (
+          <div key={group.id} className="nav-group">
+            <div className="nav-label">{group.label}</div>
+            {NAV.filter((item) => item.group === group.id).map(({ to, label, icon: Icon, match }) => (
+              <Tooltip.Root key={to} delayDuration={150}>
+                <Tooltip.Trigger asChild>
+                  <Link to={to} className={`nav-item ${match(path) ? 'active' : ''}`} aria-current={match(path) ? 'page' : undefined} aria-label={collapsed ? label : undefined}>
+                    <Icon size={16} strokeWidth={1.6} />
+                    <span className="nav-text">{label}</span>
+                    {to === '/downloads' && active > 0 && <span className="count">{active}</span>}
+                  </Link>
+                </Tooltip.Trigger>
+                {collapsed && <Tooltip.Portal><Tooltip.Content className="tooltip" side="right" sideOffset={10}>{label}</Tooltip.Content></Tooltip.Portal>}
+              </Tooltip.Root>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="side-foot">
+        {status.update && <a className="side-update" href={status.update.url} target="_blank" rel="noreferrer">Haul {status.update.version} is out. Update ↗</a>}
+        <NowDownloading status={status} />
+        <DiskMeter status={status} />
+        <div className="side-me">
+          {status.profile && (
+            <ProfileMenu profiles={status.profiles} current={status.profile} onManage={() => navigate('/settings#profiles')} side="top">
+              <button className="side-profile" aria-label={`Profile: ${status.profile.name}. Switch profile`}>
+                <Avatar profile={status.profile} size={28} />
+                <span className="side-profile-text">
+                  <b className="truncate">{status.profile.name}</b>
+                  <span className="faint truncate">{status.profiles.length > 1 ? 'Switch profile' : 'Your profile'}</span>
+                </span>
+              </button>
+            </ProfileMenu>
+          )}
+          <button className="side-collapse" onClick={() => setCollapsed((value) => !value)} aria-label={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'} title={collapsed ? 'Expand' : 'Collapse'}>
+            {collapsed ? <PanelLeftOpen size={16} strokeWidth={1.6} /> : <PanelLeftClose size={16} strokeWidth={1.6} />}
+          </button>
+        </div>
+        <span className="side-version num"><span className="truncate">{count(status.libraryCounts.series, 'show')} · {count(status.libraryCounts.movies, 'movie')}</span><span>{status.version}</span></span>
+      </div>
+    </aside>
+  );
+}
+
 function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { navigate } = useRouter();
   const [query, setQuery] = useState('');
@@ -171,27 +263,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
     <CrumbContext.Provider value={setCrumb}>
       <SearchContext.Provider value={openSearch}>
         <Tooltip.Provider>
-          <aside className="sidebar">
-            <Link to="/" className="wordmark" aria-label="Haul, TorBox player"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></Link>
-            <nav className="nav" aria-label="Main">
-              {NAV.map(({ to, label, icon: Icon, match, group }, index) => (
-                <div key={to} style={{ display: 'contents' }}>
-                  {group === 'manage' && NAV[index - 1]?.group === 'watch' && <div className="nav-divider" role="separator" />}
-                  <Link to={to} className={`nav-item ${match(path) ? 'active' : ''}`} aria-current={match(path) ? 'page' : undefined}>
-                    <Icon size={16} strokeWidth={1.6} />
-                    {label}
-                    {to === '/downloads' && active > 0 && <span className="count">{active}</span>}
-                  </Link>
-                </div>
-              ))}
-            </nav>
-            <div className="side-foot">
-              {status.update && <a href={status.update.url} target="_blank" rel="noreferrer">Haul {status.update.version} is out. Update ↗</a>}
-              <DiskMeter status={status} />
-              <span className="num">{count(status.libraryCounts.series, 'show')} · {count(status.libraryCounts.movies, 'movie')}</span>
-              <span>Haul {status.version}</span>
-            </div>
-          </aside>
+          <Sidebar status={status} path={path} />
           <div className="main">
             <header className="topbar">
               {crumb ? (

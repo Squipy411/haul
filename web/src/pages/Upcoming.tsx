@@ -171,10 +171,21 @@ function CalendarSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
       open={open}
       onOpenChange={onOpenChange}
       title="Add Upcoming to your calendar"
-      description="Your calendar subscribes to this schedule and keeps it up to date: new episodes of everything you follow or own, and followed movies."
+      description="Your calendar subscribes and keeps itself up to date."
     >
       {!data ? <Loading /> : (
         <div className="stack" style={{ gap: 12 }}>
+          <div className="choice-list" role="radiogroup" aria-label="What the calendar shows">
+            {([
+              ['found', 'When a torrent in your format is out', 'An event the moment Haul finds a version you follow a title in (say, 4K WEB-DL), with the release name in its notes. Nothing for episodes that are only airing.'],
+              ['aired', 'When episodes air', 'Every new episode of what you follow or own, and followed films, at their release time.']
+            ] as const).map(([mode, label, hint]) => (
+              <button key={mode} type="button" role="radio" aria-checked={data.mode === mode} className="choice" onClick={async () => { setData(await api.setCalendarMode(mode)); toast('Calendar updated. Subscribed calendars catch up within the hour.'); }}>
+                <span className="choice-dot" aria-hidden="true" />
+                <span><b>{label}</b><small>{hint}</small></span>
+              </button>
+            ))}
+          </div>
           <div className="panel" style={{ background: 'var(--raised)' }}>
             <b>iPhone, iPad or Mac</b>
             <p className="hint" style={{ margin: '4px 0 12px' }}>Open this page on the device and tap Subscribe. Your phone needs to reach Haul, on your home Wi-Fi or over a VPN such as Tailscale.</p>

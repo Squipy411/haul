@@ -33,30 +33,36 @@ const STATE: Record<ScheduleItem['state'], string> = {
   owned: 'In your library.'
 };
 
-/** The Upcoming schedule as a calendar a phone can subscribe to. */
-export function scheduleCalendar(items: ScheduleItem[], baseUrl: string, now = new Date()): string {
+/**
+ * The Upcoming schedule as a calendar a phone can subscribe to. 'found' (the default) has an event only once
+ * a torrent in the format you follow it in has turned up, at that moment; 'aired' has every episode and
+ * followed film at its release date.
+ */
+export function scheduleCalendar(items: ScheduleItem[], baseUrl: string, now = new Date(), mode: 'found' | 'aired' = 'found'): string {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//Haul//Upcoming//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:Haul',
+    `X-WR-CALNAME:${mode === 'found' ? 'Haul · out in your format' : 'Haul'}`,
     'X-PUBLISHED-TTL:PT1H',
     'REFRESH-INTERVAL;VALUE=DURATION:PT1H'
   ];
   for (const item of items) {
-    const at = new Date(item.released);
+    if (mode === 'found' && !item.foundAt) continue;
+    const at = new Date(mode === 'found' ? item.foundAt! : item.released);
     if (Number.isNaN(at.getTime())) continue;
     const isMovie = item.type === 'movie';
     const code = isMovie ? '' : `S${pad(item.season!)}E${pad(item.episode!)}`;
-    const summary = isMovie ? `${item.title} (movie)` : `${item.title} ${code}${item.episodeTitle ? ` · ${item.episodeTitle}` : ''}`;
+    const name = isMovie ? `${item.title} (movie)` : `${item.title} ${code}${item.episodeTitle ? ` · ${item.episodeTitle}` : ''}`;
+    const summary = mode === 'found' ? `${isMovie ? item.title : `${item.title} ${code}`}: out in your format` : name;
     const path = `/title/${item.type}/${item.imdbId}${item.season !== undefined ? `?season=${item.season}` : ''}`;
     lines.push(
       'BEGIN:VEVENT',
       `UID:${item.imdbId}${isMovie ? '' : `-${item.season}-${item.episode}`}@haul`,
       `DTSTAMP:${stamp(now)}`,
-      ...(isMovie
+      ...(isMovie && mode === 'aired'
         ? [`DTSTART;VALUE=DATE:${day(at)}`]
         : [`DTSTART:${stamp(at)}`, 'DURATION:PT30M']),
       `SUMMARY:${text(summary)}`,

@@ -6,7 +6,7 @@ describe('scheduleCalendar', () => {
     { imdbId: 'tt5875444', type: 'series', title: 'Slow Horses', season: 6, episode: 6, episodeTitle: 'Judgement Day; Part One, Again', released: '2026-10-21T00:00:00.000Z', followed: true, state: 'available', release: 'Slow.Horses.S06E06.1080p.ATVP.WEB-DL' },
     { imdbId: 'tt33764258', type: 'movie', title: 'The Odyssey', released: '2026-07-17T00:00:00.000Z', followed: true, state: 'searching' },
     { imdbId: 'tt0000001', type: 'series', title: 'Broken date', season: 1, episode: 1, released: 'not a date', followed: false, state: 'upcoming' }
-  ], 'http://10.0.0.5:60700', new Date('2026-10-22T12:00:00Z'));
+  ], 'http://10.0.0.5:60700', new Date('2026-10-22T12:00:00Z'), 'aired');
 
   it('is CRLF-separated with one event per dated item', () => {
     expect(ics.startsWith('BEGIN:VCALENDAR\r\n')).toBe(true);
@@ -25,5 +25,22 @@ describe('scheduleCalendar', () => {
     expect(unfolded).toContain('SUMMARY:Slow Horses S06E06 · Judgement Day\\; Part One\\, Again');
     expect(unfolded).toContain('URL:http://10.0.0.5:60700/title/series/tt5875444?season=6');
     for (const line of ics.split('\r\n')) expect(Buffer.byteLength(line)).toBeLessThanOrEqual(75);
+  });
+});
+
+describe('scheduleCalendar, only when a torrent in your format is out', () => {
+  const found = Date.parse('2026-10-21T03:15:00Z');
+  const ics = scheduleCalendar([
+    { imdbId: 'tt5875444', type: 'series', title: 'Slow Horses', season: 6, episode: 6, released: '2026-10-21T00:00:00.000Z', followed: true, state: 'available', release: 'Slow.Horses.S06E06.2160p.ATVP.WEB-DL', foundAt: found },
+    { imdbId: 'tt5875444', type: 'series', title: 'Slow Horses', season: 6, episode: 7, released: '2026-10-28T00:00:00.000Z', followed: true, state: 'upcoming' },
+    { imdbId: 'tt33764258', type: 'movie', title: 'The Odyssey', released: '2026-07-17T00:00:00.000Z', followed: true, state: 'searching' }
+  ], 'http://10.0.0.5:60700', new Date('2026-10-22T12:00:00Z'));
+
+  it('has an event only for what has turned up, at the moment it did', () => {
+    expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(1);
+    expect(ics).toContain('DTSTART:20261021T031500Z');
+    expect(ics.replace(/\r\n /g, '')).toContain('SUMMARY:Slow Horses S06E06: out in your format');
+    expect(ics.replace(/\r\n /g, '')).toContain('Slow.Horses.S06E06.2160p.ATVP.WEB-DL');
+    expect(ics).toContain('X-WR-CALNAME:Haul · out in your format');
   });
 });

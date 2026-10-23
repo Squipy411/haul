@@ -379,7 +379,8 @@ export class FollowService {
               season: episode.season, episode: episode.episode, episodeTitle: episode.title, released: episode.released,
               followed: followed.has(`series:${id}`),
               state: owned.has(key) ? 'owned' : downloading ? 'downloading' : hit ? 'available' : at > now ? 'upcoming' : follow && watches(follow, episode.season, episode.episode) ? 'searching' : 'aired',
-              release: hit?.release
+              release: hit?.release,
+              foundAt: hit?.foundAt
             });
           }
         } catch { /* catalog unavailable for this one */ }
@@ -395,7 +396,8 @@ export class FollowService {
           imdbId: follow.imdbId, type: 'movie', title: meta.name, poster: meta.poster, background: meta.background, released: meta.released,
           followed: true,
           state: this.ownsMovie(follow) ? 'owned' : hit?.downloadedAt ? 'downloading' : hit ? 'available' : Date.parse(meta.released) > now ? 'upcoming' : 'searching',
-          release: hit?.release
+          release: hit?.release,
+          foundAt: hit?.foundAt
         });
       } catch { /* skip */ }
     }

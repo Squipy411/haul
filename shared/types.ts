@@ -154,6 +154,8 @@ export interface Status {
   activeDownloads: number;
   /** Bytes per second across downloads to this machine right now. */
   transferSpeed: number;
+  /** The download furthest along, for the sidebar. */
+  nowDownloading?: { id: string; type: MediaType; imdbId: string; title: string; label: string; poster?: string; progress: number; remote: boolean; speed: number } | null;
   libraryCounts: { movies: number; series: number; episodes: number };
   desktop: boolean;
   update: { version: string; url: string } | null;
@@ -221,6 +223,8 @@ export interface ScheduleItem {
   followed: boolean;
   state: 'upcoming' | 'aired' | 'searching' | 'available' | 'downloading' | 'owned';
   release?: string;
+  /** When a torrent in the follow's chosen format turned up. */
+  foundAt?: number;
 }
 
 export interface SetupRequest {
@@ -488,6 +492,8 @@ export interface Profile {
   name: string;
   /** Avatar colour, e.g. #4cb3f0. */
   color: string;
+  /** A picture from the set, drawn on the colour; without one, the initial. */
+  avatar?: string;
   createdAt: number;
 }
 

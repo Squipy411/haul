@@ -1,16 +1,18 @@
 import { Check, Plus, Users } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
-import { useState } from 'react';
-import { PROFILE_COLORS } from '../../../shared/profiles';
+import { type ReactNode, useState } from 'react';
+import { PROFILE_AVATARS, PROFILE_COLORS } from '../../../shared/profiles';
 import type { Profile } from '../../../shared/types';
 import { api } from '../api';
 import { useToast } from '../lib';
+import { AVATAR_ART } from './avatars';
 import { Mark } from './ui';
 
-export function Avatar({ profile, size = 28 }: { profile: Pick<Profile, 'name' | 'color'>; size?: number }) {
+export function Avatar({ profile, size = 28 }: { profile: Pick<Profile, 'name' | 'color' | 'avatar'>; size?: number }) {
+  const art = profile.avatar ? AVATAR_ART[profile.avatar] : undefined;
   return (
     <span className="avatar" style={{ width: size, height: size, fontSize: Math.round(size * 0.44), background: profile.color }} aria-hidden="true">
-      {[...profile.name.trim()][0]?.toUpperCase() ?? '?'}
+      {art ? <svg viewBox="0 0 64 64" width={size} height={size}>{art.art}</svg> : [...profile.name.trim()][0]?.toUpperCase() ?? '?'}
     </span>
   );
 }
@@ -48,15 +50,15 @@ export function ProfilePicker({ profiles }: { profiles: Profile[] }) {
 }
 
 /** The current person in the top bar, with everyone else one click away. */
-export function ProfileMenu({ profiles, current, onManage }: { profiles: Profile[]; current: Profile; onManage: () => void }) {
+export function ProfileMenu({ profiles, current, onManage, children, side = 'bottom' }: { profiles: Profile[]; current: Profile; onManage: () => void; children?: ReactNode; side?: 'bottom' | 'top' }) {
   const toast = useToast();
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button className="profile-button" aria-label={`Profile: ${current.name}. Switch profile`} title={current.name}><Avatar profile={current} /></button>
+        {children ?? <button className="profile-button" aria-label={`Profile: ${current.name}. Switch profile`} title={current.name}><Avatar profile={current} /></button>}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content className="popover" align="end" sideOffset={8}>
+        <DropdownMenu.Content className="popover" align={side === 'top' ? 'start' : 'end'} side={side} sideOffset={8}>
           <DropdownMenu.Label className="player-menu-label">{profiles.length > 1 ? 'Switch profile' : 'Profiles'}</DropdownMenu.Label>
           {profiles.map((profile) => (
             <DropdownMenu.Item key={profile.id} className="popover-item" onSelect={() => { if (profile.id !== current.id) switchTo(profile.id).catch((failure: Error) => toast(failure.message, 'error')); }}>
@@ -66,7 +68,7 @@ export function ProfileMenu({ profiles, current, onManage }: { profiles: Profile
           ))}
           <DropdownMenu.Separator className="popover-sep" />
           <DropdownMenu.Item className="popover-item" onSelect={onManage}>
-            <span className="row" style={{ gap: 10 }}>{profiles.length > 1 ? <Users size={16} /> : <Plus size={16} />}{profiles.length > 1 ? 'Manage profiles' : 'Add a profile'}</span>
+            <span className="row" style={{ gap: 10 }}>{profiles.length > 1 ? <Users size={16} /> : <Plus size={16} />}{profiles.length > 1 ? 'Pictures and profiles' : 'Pick a picture, add a profile'}</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -88,7 +90,7 @@ export function ProfilesEditor({ profiles, current, onChange }: { profiles: Prof
     <div className="stack" style={{ gap: 14 }}>
       {profiles.map((profile, index) => (
         <div key={profile.id} className="profile-row">
-          <Avatar profile={profile} size={40} />
+          <Avatar profile={profile} size={48} />
           <div className="stack" style={{ gap: 8, minWidth: 0 }}>
             <input
               className="input"
@@ -101,6 +103,16 @@ export function ProfilesEditor({ profiles, current, onChange }: { profiles: Prof
             <div className="swatches" role="radiogroup" aria-label={`Colour for ${profile.name}`}>
               {PROFILE_COLORS.map((color) => (
                 <button key={color} type="button" role="radio" aria-checked={profile.color === color} aria-label={color} className="swatch" style={{ background: color }} disabled={busy} onClick={() => void run(() => api.updateProfile(profile.id, { color }))} />
+              ))}
+            </div>
+            <div className="avatar-picker" role="radiogroup" aria-label={`Picture for ${profile.name}`}>
+              <button type="button" role="radio" aria-checked={!profile.avatar} aria-label="Initial" className="avatar-option" disabled={busy} onClick={() => void run(() => api.updateProfile(profile.id, { avatar: null }))}>
+                <Avatar profile={{ ...profile, avatar: undefined }} size={30} />
+              </button>
+              {PROFILE_AVATARS.map((avatar) => (
+                <button key={avatar} type="button" role="radio" aria-checked={profile.avatar === avatar} aria-label={AVATAR_ART[avatar]?.label ?? avatar} title={AVATAR_ART[avatar]?.label} className="avatar-option" disabled={busy} onClick={() => void run(() => api.updateProfile(profile.id, { avatar }))}>
+                  <Avatar profile={{ ...profile, avatar }} size={30} />
+                </button>
               ))}
             </div>
           </div>

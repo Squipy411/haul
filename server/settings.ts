@@ -12,6 +12,8 @@ interface StoredSettings extends Omit<Settings, 'passwordSet' | 'twoFactor'> {
   calendarToken: string;
   /** Moves on with "Sign out everywhere", which ends every password session. */
   sessionGeneration: number;
+  /** The calendar feed: events when a wanted torrent is found (default), or at air dates. */
+  calendarMode: 'found' | 'aired';
   /** Sharing over the internet with Cloudflare's tunnel; the token is never shown again. */
   remote: { mode: 'off' | 'quick' | 'token'; token: string; hostname: string };
   /** Two-step sign-in: the authenticator secret ('' when off), one being set up, and the last code step used. */
@@ -81,6 +83,7 @@ function defaults(options: ServerOptions): StoredSettings {
     calendarToken: randomToken(18),
     sessionGeneration: 0,
     remote: { mode: 'off', token: '', hostname: '' },
+    calendarMode: 'found',
     totpSecret: '',
     totpPending: '',
     totpUsedStep: -1
@@ -132,6 +135,7 @@ export class SettingsService {
     data.calendarToken ||= randomToken(18);
     data.sessionGeneration ??= 0;
     data.remote = { ...base.remote, ...data.remote };
+    if (data.calendarMode !== 'aired') data.calendarMode = 'found';
     data.totpSecret ??= '';
     data.totpPending ??= '';
     data.totpUsedStep ??= -1;
@@ -147,7 +151,7 @@ export class SettingsService {
   }
 
   publicView(): Settings {
-    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, sessionGeneration: _generation, remote: _remote, totpSecret, totpPending: _pending, totpUsedStep: _used, ...rest } = this.file.data;
+    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, sessionGeneration: _generation, remote: _remote, calendarMode: _calendarMode, totpSecret, totpPending: _pending, totpUsedStep: _used, ...rest } = this.file.data;
     const key = rest.torboxApiKey;
     return {
       ...rest,
@@ -230,6 +234,11 @@ export class SettingsService {
 
   regenerateCalendarToken(): void {
     this.file.data.calendarToken = randomToken(18);
+    this.file.flush();
+  }
+
+  setCalendarMode(mode: 'found' | 'aired'): void {
+    this.file.data.calendarMode = mode;
     this.file.flush();
   }
 

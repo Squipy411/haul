@@ -187,11 +187,13 @@ export function speed(value?: number): string {
 }
 
 export function duration(seconds?: number): string {
-  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '';
+  // Past a month the figure means nothing (a stalled download crawling at a few bytes a second).
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0 || seconds > 30 * 86_400) return '';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
+  if (hours >= 48) return `${Math.floor(hours / 24)}d ${hours % 24}h`;
   return `${hours}h ${minutes % 60}m`;
 }
 

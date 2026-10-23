@@ -68,7 +68,7 @@ function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
         <div style={{ minWidth: 0 }}>
           <div className="t1 truncate">{job.title}</div>
           <div className="t2 truncate">{join([job.label === 'Movie' ? 'Movie' : job.label, RES[job.release.info.resolution], job.release.kind === 'season' || job.release.kind === 'multi-season' ? 'season pack' : ''])}</div>
-          <div className="mobile-line"><StatusPill job={job} />{rate > 0 && <span>{speed(rate)}</span>}{left > 0 && <span>{duration(left)} left</span>}</div>
+          <div className="mobile-line"><StatusPill job={job} />{rate > 0 && <span>{speed(rate)}</span>}{duration(left) && <span>{duration(left)} left</span>}</div>
         </div>
       </Link>
       <div className="hide-sm" style={{ minWidth: 0 }}>
@@ -76,7 +76,7 @@ function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
         <div className="t2 truncate" style={{ marginTop: 6 }}><span className="num" style={{ color: 'var(--text)' }}><Figure value={Math.round(progress.value * 100)} suffix="%" /></span>{detail ? ` · ${detail}` : ''}</div>
       </div>
       <span className="r num hide-sm" style={{ color: job.status === 'downloading' ? 'var(--accent)' : 'var(--muted)' }}>{rate > 0 ? speed(rate) : '–'}</span>
-      <span className="r num muted hide-sm">{left > 0 ? duration(left) : '–'}</span>
+      <span className="r num muted hide-sm">{duration(left) || '–'}</span>
       <span className="hide-sm"><StatusPill job={job} /></span>
       <Menu label={`Actions for ${job.title}`} actions={actions} trigger={<button className="btn ghost sm icon" style={{ justifySelf: 'end' }}><MoreHorizontal size={17} /></button>} />
       {(job.note && job.status !== 'queued') || job.error ? (

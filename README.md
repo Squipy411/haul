@@ -13,7 +13,7 @@ You need a TorBox account and either Docker or a Windows PC.
 ## What you can do
 
 - **Watch in your browser.** Press play on any film or episode: Haul plays your own file, or streams the best version TorBox already has without downloading it first. Resume where you stopped, Continue watching, Skip intro, next episode, an episodes drawer in the player, subtitles and audio tracks.
-- **Profiles for everyone in the house.** Each person gets their own Continue watching, My list, watched episodes and History; the library and downloads are shared. With two or more, Haul asks "Who's watching?" once per browser.
+- **Profiles for everyone in the house.** Each person gets their own Continue watching, My list, watched episodes and History, and picks a picture (a cat, a robot, an astronaut and nine more) on their own colour; the library and downloads are shared. With two or more, Haul asks "Who's watching?" once per browser.
 - **Save, catch up, look ahead.** Press **My list** on anything to keep it for later (a row on Home and a tab in My library). Watch the **trailer** without leaving Haul, or just rest the mouse on a poster: a card opens with the trailer playing, muted (turn it off in Settings → Watching). Mark an episode, a whole season or a film as watched in one go, and Continue watching picks up after it.
 - **Built like a streaming site.** A featured hero on Home, rows for what you're watching, new episodes of your shows and your own library, Shows and Movies to browse by genre, and title pages where episodes show what you've watched. Downloading lives one tab away.
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
@@ -149,7 +149,7 @@ The topic is a long random name. On ntfy.sh anyone who knows it can read your no
 
 ## Calendar
 
-Upcoming → **Add to calendar** gives you a private calendar address. On an iPhone, iPad or Mac, tap **Subscribe**; elsewhere, add a calendar "from URL" and paste it. Episodes appear at their air time and followed movies on their release day, with whether a torrent is out yet. Google Calendar fetches calendars from Google's servers, so it only works if Haul is reachable from the internet.
+Upcoming → **Add to calendar** gives you a private calendar address. On an iPhone, iPad or Mac, tap **Subscribe**; elsewhere, add a calendar "from URL" and paste it. By default an event appears only once a torrent in the format you follow (say, 1080p WEB-DL) is actually out, so your calendar says what you can watch now. Prefer air dates? Pick **When episodes air** in the same window and every episode and release day appears, with whether a torrent is out yet. Google Calendar fetches calendars from Google's servers, so it only works if Haul is reachable from the internet.
 
 ## Nuvio and Stremio
 
