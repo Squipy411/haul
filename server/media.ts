@@ -294,11 +294,70 @@ export function srtToVtt(srt: string): string {
 }
 
 /** "English", "English (SDH)", "Track 3". */
+const LANGUAGE_NAMES: Record<string, string> = Object.fromEntries(Object.entries({
+  English: ['eng', 'en'],
+  Spanish: ['spa', 'es'],
+  French: ['fre', 'fra', 'fr'],
+  German: ['ger', 'deu', 'de'],
+  Italian: ['ita', 'it'],
+  Japanese: ['jpn', 'ja'],
+  Korean: ['kor', 'ko'],
+  Portuguese: ['por', 'pt'],
+  Russian: ['rus', 'ru'],
+  Chinese: ['chi', 'zho', 'zh'],
+  Hindi: ['hin', 'hi'],
+  Dutch: ['dut', 'nld', 'nl'],
+  Swedish: ['swe', 'sv'],
+  Polish: ['pol', 'pl'],
+  Turkish: ['tur', 'tr'],
+  Arabic: ['ara', 'ar'],
+  Danish: ['dan', 'da'],
+  Norwegian: ['nor', 'nob', 'nno', 'no', 'nb'],
+  Finnish: ['fin', 'fi'],
+  Czech: ['cze', 'ces', 'cs'],
+  Hungarian: ['hun', 'hu'],
+  Greek: ['gre', 'ell', 'el'],
+  Hebrew: ['heb', 'he'],
+  Thai: ['tha', 'th'],
+  Vietnamese: ['vie', 'vi'],
+  Indonesian: ['ind', 'id'],
+  Malay: ['may', 'msa', 'ms'],
+  Romanian: ['rum', 'ron', 'ro'],
+  Ukrainian: ['ukr', 'uk'],
+  Bulgarian: ['bul', 'bg'],
+  Croatian: ['hrv', 'hr'],
+  Serbian: ['srp', 'sr'],
+  Slovenian: ['slv', 'sl'],
+  Slovak: ['slo', 'slk', 'sk'],
+  Estonian: ['est', 'et'],
+  Latvian: ['lav', 'lv'],
+  Lithuanian: ['lit', 'lt'],
+  Icelandic: ['ice', 'isl', 'is'],
+  Catalan: ['cat', 'ca'],
+  Basque: ['baq', 'eus', 'eu'],
+  Galician: ['glg', 'gl'],
+  Filipino: ['fil', 'tgl', 'tl'],
+  Persian: ['per', 'fas', 'fa'],
+  Urdu: ['urd', 'ur'],
+  Bengali: ['ben', 'bn'],
+  Tamil: ['tam', 'ta'],
+  Telugu: ['tel', 'te'],
+}).flatMap(([name, codes]) => codes.map((code) => [code, name])));
+
+/** "eng", "en" and "English" all become "English", so a choice carries over between files and TorBox. */
+export function languageName(code?: string | null): string | undefined {
+  const value = code?.trim();
+  if (!value || /^(und|unknown|n\/a)$/i.test(value)) return undefined;
+  const lower = value.toLowerCase();
+  return LANGUAGE_NAMES[lower] ?? (lower.length > 3 ? lower[0]!.toUpperCase() + lower.slice(1) : value.toUpperCase());
+}
+
 export function trackLabel(entry: { language?: string; title?: string; index: number; codec?: string; channels?: number }, kind: 'audio' | 'subtitle'): string {
-  const names: Record<string, string> = { eng: 'English', en: 'English', spa: 'Spanish', es: 'Spanish', fre: 'French', fra: 'French', fr: 'French', ger: 'German', deu: 'German', de: 'German', ita: 'Italian', it: 'Italian', jpn: 'Japanese', ja: 'Japanese', kor: 'Korean', ko: 'Korean', por: 'Portuguese', pt: 'Portuguese', rus: 'Russian', ru: 'Russian', chi: 'Chinese', zho: 'Chinese', zh: 'Chinese', hin: 'Hindi', hi: 'Hindi', dut: 'Dutch', nld: 'Dutch', swe: 'Swedish', pol: 'Polish', tur: 'Turkish', ara: 'Arabic' };
-  const language = entry.language ? names[entry.language.toLowerCase()] ?? entry.language.toUpperCase() : '';
-  const title = entry.title && entry.title.toLowerCase() !== language.toLowerCase() ? entry.title : '';
+  const language = languageName(entry.language) ?? '';
+  let title = entry.title && entry.title.trim().toLowerCase() !== language.toLowerCase() ? entry.title.trim() : '';
+  // "English (SDH)" on an English track is just "SDH".
+  if (title && language && title.toLowerCase().startsWith(language.toLowerCase())) title = title.slice(language.length).trim().replace(/^\((.*)\)$/, '$1').trim();
   const channels = kind === 'audio' && entry.channels ? (entry.channels >= 6 ? `${entry.channels === 8 ? '7.1' : '5.1'}` : entry.channels === 1 ? 'mono' : '') : '';
-  const label = [language, title && `(${title})`, channels].filter(Boolean).join(' ');
+  const label = [language, title && (title.includes('(') ? `· ${title}` : `(${title})`), channels].filter(Boolean).join(' ');
   return label || `Track ${entry.index + 1}`;
 }

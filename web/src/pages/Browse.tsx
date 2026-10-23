@@ -1,40 +1,57 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MediaType, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, PosterCard, TabBar } from '../components/ui';
-import { useRouter } from '../lib';
+import { useQueryState, useRouter } from '../lib';
 
 const GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller'];
 
+/** What each list had loaded (Load more included), so going back to it shows the same titles at once
+ *  and lands where you were. Kept ten minutes. */
+const loaded = new Map<string, { at: number; items: MetaPreview[]; done: boolean }>();
+
 export function Browse({ type, catalog }: { type: MediaType; catalog: string }) {
   const year = new Date().getFullYear();
-  const [genre, setGenre] = useState<string>(catalog === 'year' ? String(year) : '');
-  const [items, setItems] = useState<MetaPreview[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [genre, setGenre] = useQueryState('genre', catalog === 'year' ? String(year) : '');
+  const key = `${type}/${catalog}/${genre}`;
+  const remembered = (() => { const hit = loaded.get(key); return hit && Date.now() - hit.at < 10 * 60_000 ? hit : undefined; })();
+  const [items, setItems] = useState<MetaPreview[]>(() => remembered?.items ?? []);
+  const [loading, setLoading] = useState(!remembered);
   const [error, setError] = useState<string>();
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(remembered?.done ?? false);
+  const latest = useRef(0);
 
   const { navigate } = useRouter();
   const title = type === 'series' ? 'Shows' : 'Movies';
 
   const load = async (skip: number) => {
+    const token = ++latest.current;
     setLoading(true);
     setError(undefined);
     try {
       const result = await api.catalog(type, catalog, { genre: genre || undefined, skip });
+      // A newer request (another genre) won.
+      if (token !== latest.current) return;
+      const finished = result.items.length < 20;
       setItems((current) => {
         const seen = new Set(current.map((item) => item.id));
-        return skip ? [...current, ...result.items.filter((item) => !seen.has(item.id))] : result.items;
+        const next = skip ? [...current, ...result.items.filter((item) => !seen.has(item.id))] : result.items;
+        loaded.set(key, { at: Date.now(), items: next, done: finished });
+        return next;
       });
-      setDone(result.items.length < 20);
+      setDone(finished);
     } catch (failure) {
-      setError((failure as Error).message);
+      if (token === latest.current) setError((failure as Error).message);
     } finally {
-      setLoading(false);
+      if (token === latest.current) setLoading(false);
     }
   };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { setItems([]); void load(0); }, [type, catalog, genre]);
+  useEffect(() => {
+    if (remembered) { latest.current += 1; setItems(remembered.items); setDone(remembered.done); setLoading(false); setError(undefined); return; }
+    setItems([]);
+    void load(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, catalog, genre]);
 
   const options = catalog === 'year' ? Array.from({ length: 8 }, (_, index) => String(year - index)) : ['', ...GENRES];
 

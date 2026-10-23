@@ -497,7 +497,14 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; text-wrap: balance; }
 .player-bar .buffered { background: rgba(255, 255, 255, 0.35); }
 .player-bar .played { background: #fff; }
 .player-bar .knob { position: absolute; top: 50%; width: 14px; height: 14px; margin-left: -7px; margin-top: -7px; border-radius: 999px; background: #fff; opacity: 0; transform: scale(0.96); transition: opacity 0.12s, transform 0.12s; }
-.player-bar:hover .knob, .player-bar:focus-visible .knob { opacity: 1; transform: scale(1); }
+.player-bar:hover .knob, .player-bar:focus-visible .knob, .player-bar.scrubbing .knob { opacity: 1; transform: scale(1); }
+.player-bar.scrubbing .track { height: 6px; }
+.player-bar.scrubbing .knob { transform: scale(1.25); }
+@media (hover: none) { .player-bar .knob { opacity: 1; transform: scale(1); } .player-bar { height: 28px; } }
+.player-flash { position: absolute; top: 50%; z-index: 1; display: grid; justify-items: center; gap: 6px; padding: 18px 22px; border-radius: 999px; background: rgba(0, 0, 0, 0.5); font-size: 13px; font-weight: 600; pointer-events: none; transform: translateY(-50%); animation: flash 0.9s ease-out forwards; } /* taste-skill-ignore: neutral bubble over video */
+.player-flash.back { left: 12%; }
+.player-flash.forward { right: 12%; }
+@keyframes flash { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
 .player-bar .hover-time { position: absolute; bottom: 22px; transform: translateX(-50%); padding: 3px 8px; border-radius: 6px; background: #1c1c1c; font-size: 12px; pointer-events: none; }
 .player-center { position: absolute; inset: 0; margin: auto; width: 84px; height: 84px; display: grid; place-items: center; z-index: 1; pointer-events: none; }
 .player-big { pointer-events: auto; border: 0; border-radius: 999px; background: rgba(0, 0, 0, 0.55); color: #fff; cursor: pointer; }
@@ -518,6 +525,9 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; text-wrap: balance; }
 .player-menu { min-width: 220px; max-height: min(60vh, 420px); overflow-y: auto; }
 .player-menu-label { padding: 8px 12px 4px; font-size: 12px; color: var(--faint); }
 .player-menu .popover-item[data-state="checked"] { color: #fff; font-weight: 600; }
+.player-speeds { display: flex; gap: 4px; padding: 0 4px 6px; }
+.player-speeds .popover-item { flex: 1; justify-content: center; height: 30px; padding: 0; font-size: 13px; }
+.player-speeds .popover-item[data-state="checked"] { background: #fff; color: #000; }
 @media (max-width: 600px) {
   .hide-xs { display: none; }
   .player-skip, .player-next { bottom: 100px; right: 16px; }
@@ -529,7 +539,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; text-wrap: balance; }
 .hero { position: relative; display: flex; align-items: flex-end; overflow: hidden; margin: -26px calc(-1 * var(--gutter)) 0; background: #000; }
 .hero.large { min-height: clamp(440px, 64vh, 660px); }
 .hero.medium { min-height: clamp(400px, 56vh, 580px); }
-.hero-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; animation: fade 0.6s ease-out; }
+.hero-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 22%; }
 .hero-scrim { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.62) 34%, rgba(0, 0, 0, 0) 70%), linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 46%); } /* taste-skill-ignore: neutral scrim over a photo */
 .hero-content { position: relative; z-index: 1; display: grid; gap: 14px; width: min(660px, 100%); padding: 0 var(--gutter) 42px; }
 .hero-logo img { display: block; max-width: min(440px, 82%); max-height: 150px; object-fit: contain; object-position: left bottom; }
@@ -612,3 +622,10 @@ a.episode-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .player-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.35; animation: fade 0.4s ease-out; }
 .player.waiting .player-message { z-index: 2; }
 .player video[poster] { object-fit: contain; }
+
+/* ---------- pictures fade in once they've loaded (main.tsx marks them) ---------- */
+.poster img, .hero-backdrop, .hero-logo img, .new-ep .still img, .watch-card .still img, .episode-still img, .player-episode .still img, .object .cover img, .transfer-row .thumb img, .trow .ident .thumb img, .trow .ident .poster-thumb img { opacity: 0; transition: opacity 0.35s var(--ease-out), transform 0.3s var(--ease-out); }
+.poster img[data-loaded], .hero-backdrop[data-loaded], .hero-logo img[data-loaded], .new-ep .still img[data-loaded], .watch-card .still img[data-loaded], .episode-still img[data-loaded], .player-episode .still img[data-loaded], .object .cover img[data-loaded], .transfer-row .thumb img[data-loaded], .trow .ident .thumb img[data-loaded], .trow .ident .poster-thumb img[data-loaded] { opacity: 1; }
+
+/* ---------- a page eases in rather than snapping ---------- */
+.main > .canvas { animation: fade 0.18s ease-out; }

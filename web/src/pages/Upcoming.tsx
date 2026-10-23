@@ -4,7 +4,7 @@ import type { Follow, ScheduleItem } from '../../../shared/types';
 import { api } from '../api';
 import { FollowSheet, describeWant, isStrict } from '../components/Follow';
 import { Empty, ErrorNote, Loading, Sheet, TabBar, Toggle, join } from '../components/ui';
-import { Link, ago, copyText, pad, useAsync, usePolling, useToast } from '../lib';
+import { Link, ago, copyText, pad, useAsync, usePolling, useQueryState, useToast } from '../lib';
 
 const dayKey = (date: Date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 
@@ -197,7 +197,8 @@ function CalendarSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 }
 
 export function Upcoming() {
-  const [tab, setTab] = useState<'schedule' | 'following'>('schedule');
+  const [tabParam, setTab] = useQueryState<'schedule' | 'following'>('tab', 'schedule');
+  const tab = tabParam === 'following' ? 'following' : 'schedule';
   const [calendar, setCalendar] = useState(false);
   const follows = useAsync(() => api.follows(), [tab]);
   return (

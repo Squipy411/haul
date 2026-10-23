@@ -398,10 +398,10 @@ export interface AddonInfo {
 
 // ---------- Watching ----------
 
-export interface PlayTrack { index: number; label: string }
+export interface PlayTrack { index: number; label: string; language?: string }
 
 /** A subtitle choice. With `url`, the player overlays a WebVTT file; without, the stream is rebuilt with it burned in (TorBox). */
-export interface PlaySubtitle { id: string; label: string; url?: string }
+export interface PlaySubtitle { id: string; label: string; url?: string; language?: string }
 
 /** What the browser can decode, so the server only converts what it must. */
 export interface PlayCaps { hevc: boolean; av1: boolean; ac3: boolean }
@@ -432,8 +432,8 @@ export interface PlaySession {
   audios: PlayTrack[];
   audio: number;
   subtitles: PlaySubtitle[];
-  /** Burned-in subtitle (TorBox), if one is chosen. */
-  subtitle_id?: string;
+  /** The subtitle already on (your usual language), if any: its id in `subtitles`. */
+  chosenSubtitle?: string;
   /** TorBox's guess at where the opening titles end. */
   intro?: { start: number; end: number };
   next?: { season: number; episode: number; title: string };

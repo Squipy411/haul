@@ -5,7 +5,7 @@ import type { LibraryFile, MediaType, Meta, PlayCaps, PlaySession, PlaySubtitle,
 import type * as catalog from './catalog.js';
 import { type Context, HttpError, type Router, sendFile } from './http.js';
 import type { Library } from './library.js';
-import { type Caps, HlsJobs, type MediaTools, type Probe, chooseMode, defaultAudio, srtToVtt, trackLabel, videoPlays } from './media.js';
+import { type Caps, HlsJobs, type MediaTools, type Probe, chooseMode, defaultAudio, languageName, srtToVtt, trackLabel, videoPlays } from './media.js';
 import { type ProgressStore, isFinished, progressKey } from './progress.js';
 import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile } from './release.js';
 import type { SearchService } from './search.js';
@@ -33,8 +33,22 @@ export function languageTier(info: Release['info']): number {
   return isForeignOnly(info) ? 2 : 1;
 }
 
-const ENGLISH = new Set(['eng', 'en', 'english']);
 const HOUR = 3_600_000;
+
+/** The languages you last picked in the player ("English", "Japanese"); subtitles undefined means off. */
+interface Wants { audio?: string; subtitles?: string }
+function wantsFrom(body: Record<string, unknown>): Wants {
+  const name = (value: unknown) => (typeof value === 'string' && value.trim() ? languageName(value.slice(0, 40)) : undefined);
+  return { audio: name(body.audioLanguage), subtitles: name(body.subtitleLanguage) };
+}
+
+/** The track in your language: a full one before a "forced" (signs only) one. */
+export function trackFor<T extends { language?: string | null; title?: string | null; forced?: boolean }>(tracks: T[], language?: string): number {
+  if (!language) return -1;
+  const matching = tracks.map((track, position) => ({ track, position })).filter(({ track }) => languageName(track.language) === language);
+  const full = matching.find(({ track }) => !track.forced && !/forced|signs/i.test(track.title ?? ''));
+  return (full ?? matching[0])?.position ?? -1;
+}
 
 /** "0:22:22.078000" → 1342.078 */
 export function clockSeconds(value?: string): number | undefined {
@@ -239,7 +253,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
    * The release, torrent, file and stream for one title. A version already in the TorBox list needs no
    * search at all; otherwise the best version TorBox has cached is found and added.
    */
-  const resolveTorbox = async (type: MediaType, imdbId: string, season?: number, episode?: number, hash?: string, add = true) => {
+  const resolveTorbox = async (type: MediaType, imdbId: string, season?: number, episode?: number, hash?: string, add = true, wants: Wants = {}) => {
     let pick: { hash: string; name: string; cached: boolean };
     if (hash) {
       const listed = findTorrent(await torrents(), hash);
@@ -269,20 +283,29 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     let stream = await streamFor(torrent.id, target.id).catch((error: Error) => {
       throw new HttpError(502, error instanceof TorboxError && /plan|pro|subscri/i.test(error.message) ? 'Streaming from TorBox needs a TorBox Pro plan.' : `TorBox couldn't start the stream: ${error.message}`);
     });
-    // A release whose first track is a dub but which carries English starts in English.
+    // Starts in the language you last listened in (English unless you've picked another), when the
+    // release's first track is something else, and with your usual subtitles burned in.
     const audios = stream.metadata?.audios ?? [];
-    const english = audios.findIndex((track) => ENGLISH.has(String(track.language ?? '').toLowerCase()));
+    const wantedAudio = wants.audio ?? 'English';
+    const spoken = trackFor(audios, wantedAudio);
     let audio = 0;
-    if (english > 0 && !ENGLISH.has(String(audios[0]?.language ?? '').toLowerCase())) {
-      const switched = await streamFor(torrent.id, target.id, english).catch(() => null);
-      if (switched) { stream = switched; audio = english; }
+    if (spoken > 0 && languageName(audios[0]?.language) !== wantedAudio) {
+      const switched = await streamFor(torrent.id, target.id, spoken).catch(() => null);
+      if (switched) { stream = switched; audio = spoken; }
     }
-    return { name: pick.name, torrent, target, stream, audio };
+    let subtitle: number | null = null;
+    const written = trackFor(stream.metadata?.subtitles ?? [], wants.subtitles);
+    if (written >= 0) {
+      const withSubtitles = await streamFor(torrent.id, target.id, audio, written).catch(() => null);
+      if (withSubtitles) { stream = withSubtitles; subtitle = written; }
+    }
+    return { name: pick.name, torrent, target, stream, audio, subtitle };
   };
 
   const torboxSubtitles = (stream: TorboxStream): PlaySubtitle[] => (stream.metadata?.subtitles ?? []).map((entry, position) => ({
     id: `tb:${position}`,
-    label: trackLabel({ index: position, language: entry.language, title: entry.title ?? undefined }, 'subtitle')
+    label: trackLabel({ index: position, language: entry.language, title: entry.title ?? undefined }, 'subtitle'),
+    language: languageName(entry.language)
   }));
 
   router.post('/api/play', async (ctx) => {
@@ -294,12 +317,13 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     const episode = type === 'series' ? Number(body.episode) : undefined;
     if (type === 'series' && (!Number.isInteger(season) || !Number.isInteger(episode))) throw new HttpError(400, 'Which episode?');
     const caps = capsFrom(body.caps);
+    const wants = wantsFrom(body);
     const hash = body.hash ? String(body.hash).toLowerCase() : undefined;
     const file = body.source === 'torbox' || hash ? undefined : localFile(type, imdbId, season, episode);
     const local = Boolean(file && fs.existsSync(file.path));
     // The title's details and the TorBox side are fetched at the same time.
     const metaLoad = deps.catalog.meta(type, imdbId);
-    const torboxLoad = local ? null : torbox.configured ? resolveTorbox(type, imdbId, season, episode, hash) : null;
+    const torboxLoad = local ? null : torbox.configured ? resolveTorbox(type, imdbId, season, episode, hash, true, wants) : null;
     torboxLoad?.catch(() => undefined);
     const meta = await metaLoad;
     const entry = type === 'series' ? meta.episodes.find((item) => item.season === season && item.episode === episode) : undefined;
@@ -317,13 +341,15 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     if (file && local) {
       const canConvert = await media.hasFfmpeg();
       const probe = canConvert ? await media.probe(file.path).catch(() => null) : null;
-      const audio = probe ? defaultAudio(probe) : 0;
+      const spoken = probe ? trackFor(probe.audios, wants.audio) : -1;
+      const audio = probe ? (spoken >= 0 ? probe.audios[spoken]!.index : defaultAudio(probe)) : 0;
       const mode = chooseMode(file.path, probe, caps, audio, canConvert);
       const id = remember({ kind: 'local', file, probe, caps, audio, at: Date.now() });
-      const subtitles: PlaySubtitle[] = [
-        ...file.subtitles.map((subtitle, index) => ({ id: `s${index}`, label: `${trackLabel({ index, language: subtitle.lang === 'und' ? undefined : subtitle.lang }, 'subtitle')} (file)`, url: `/api/play/local/${id}/subtitle/s${index}.vtt` })),
-        ...(probe?.subtitles.filter((subtitle) => subtitle.text).map((subtitle) => ({ id: `e${subtitle.index}`, label: trackLabel(subtitle, 'subtitle'), url: `/api/play/local/${id}/subtitle/e${subtitle.index}.vtt` })) ?? [])
-      ];
+      const sidecars = file.subtitles.map((subtitle, index) => ({ id: `s${index}`, label: `${trackLabel({ index, language: subtitle.lang }, 'subtitle')} (file)`, url: `/api/play/local/${id}/subtitle/s${index}.vtt`, language: languageName(subtitle.lang), forced: /forced/i.test(path.basename(subtitle.path)) }));
+      const embedded = (probe?.subtitles ?? []).filter((subtitle) => subtitle.text).map((subtitle) => ({ id: `e${subtitle.index}`, label: trackLabel(subtitle, 'subtitle'), url: `/api/play/local/${id}/subtitle/e${subtitle.index}.vtt`, language: languageName(subtitle.language), forced: subtitle.forced, title: subtitle.title }));
+      const choices = [...sidecars, ...embedded];
+      const subtitles: PlaySubtitle[] = choices.map(({ id: choice, label, url, language }) => ({ id: choice, label, url, language }));
+      const chosen = trackFor(choices, wants.subtitles);
       const session: PlaySession = {
         ...base,
         kind: 'local',
@@ -331,9 +357,10 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
         mode: mode === 'direct' ? 'direct' : 'stream',
         converting: mode === 'transcode' || (probe ? !videoPlays(probe, caps) : false),
         duration: probe?.duration || undefined,
-        audios: probe?.audios.map((track) => ({ index: track.index, label: trackLabel(track, 'audio') })) ?? [],
+        audios: probe?.audios.map((track) => ({ index: track.index, label: trackLabel(track, 'audio'), language: languageName(track.language) })) ?? [],
         audio,
         subtitles,
+        chosenSubtitle: chosen >= 0 ? subtitles[chosen]!.id : undefined,
         source: path.basename(file.path),
         stream: id
       };
@@ -341,9 +368,9 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     }
 
     if (!torboxLoad) throw new HttpError(400, 'Add your TorBox API key in Settings to stream.');
-    const { name, torrent, target, stream, audio } = await torboxLoad;
+    const { name, torrent, target, stream, audio, subtitle } = await torboxLoad;
     warmStream(stream.hls_url, base.resume ?? 0);
-    const id = remember({ kind: 'torbox', torrentId: torrent.id, fileId: target.id, upstream: stream.hls_url, audio, subtitle: null, at: Date.now() });
+    const id = remember({ kind: 'torbox', torrentId: torrent.id, fileId: target.id, upstream: stream.hls_url, audio, subtitle, at: Date.now() });
     const intro = stream.intro_information;
     const session: PlaySession = {
       ...base,
@@ -351,9 +378,10 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       url: `/api/play/torbox/${id}/playlist.m3u8`,
       mode: 'hls',
       duration: clockSeconds(stream.metadata?.video?.duration),
-      audios: (stream.metadata?.audios ?? []).map((track, position) => ({ index: position, label: trackLabel({ index: position, language: track.language, title: track.title ?? undefined, channels: track.channels }, 'audio') })),
+      audios: (stream.metadata?.audios ?? []).map((track, position) => ({ index: position, label: trackLabel({ index: position, language: track.language, title: track.title ?? undefined, channels: track.channels }, 'audio'), language: languageName(track.language) })),
       audio,
       subtitles: torboxSubtitles(stream),
+      chosenSubtitle: subtitle === null ? undefined : `tb:${subtitle}`,
       intro: intro && Number(intro.end_time) > 10 ? { start: Number(intro.start_time) || 0, end: Number(intro.end_time) } : undefined,
       source: name,
       stream: id
@@ -379,7 +407,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       prepared.set(key, Date.now());
       // resolveTorbox warms the list and the search on its way; it stops short of adding a torrent.
       const work = body.stream
-        ? resolveTorbox(type, imdbId, season, episode, undefined, false).then((found) => warmStream(found.stream.hls_url, progress.resumeAt(progressKey(type, imdbId, season, episode)) ?? 0))
+        ? resolveTorbox(type, imdbId, season, episode, undefined, false, wantsFrom(body)).then((found) => warmStream(found.stream.hls_url, progress.resumeAt(progressKey(type, imdbId, season, episode)) ?? 0))
         : Promise.all([torrents(), deps.catalog.meta(type, imdbId), bestCached(type, imdbId, season, episode)]);
       work.catch(() => undefined);
     }
@@ -484,6 +512,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     if (!/^tt\d+$/.test(imdbId) || !Number.isFinite(position) || !Number.isFinite(duration) || duration <= 0) throw new HttpError(400, 'Bad progress');
     const season = type === 'series' ? Number(body.season) : undefined;
     const episode = type === 'series' ? Number(body.episode) : undefined;
+    if (type === 'series' && (!Number.isInteger(season) || !Number.isInteger(episode))) throw new HttpError(400, 'Bad progress');
     const text = (value: unknown, max = 200) => (typeof value === 'string' ? value.slice(0, max) : undefined);
     const saved = progress.save({
       key: progressKey(type, imdbId, season, episode), type, imdbId, season, episode,
@@ -500,25 +529,25 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
 
   /** Unfinished titles, and for shows you finished an episode of, the next one. */
   router.get('/api/continue', async (ctx) => {
-    const items: WatchProgress[] = [];
-    for (const entry of progress.recent()) {
-      if (!isFinished(entry)) { items.push(entry); continue; }
-      if (entry.type !== 'series') continue;
+    // Shows' episode lists are looked up together, not one after another.
+    const found = await Promise.all(progress.recent().map(async (entry): Promise<WatchProgress | null> => {
+      if (!isFinished(entry)) return entry;
+      if (entry.type !== 'series') return null;
       try {
         const meta = await deps.catalog.meta('series', entry.imdbId);
         const next = nextEpisode(meta, entry.season!, entry.episode!);
-        if (!next) continue;
+        if (!next) return null;
         const saved = progress.get(progressKey('series', entry.imdbId, next.season, next.episode));
-        items.push(saved && !isFinished(saved) ? saved : {
+        return saved && !isFinished(saved) ? saved : {
           ...entry,
           key: progressKey('series', entry.imdbId, next.season, next.episode),
           season: next.season, episode: next.episode, episodeTitle: next.title,
           background: meta.episodes.find((item) => item.season === next.season && item.episode === next.episode)?.thumbnail ?? entry.background,
           position: 0, upNext: true
-        });
-      } catch { /* catalog unavailable; skip it this time */ }
-    }
-    ctx.json(200, { items: items.slice(0, 20) });
+        };
+      } catch { return null; /* catalog unavailable; skip it this time */ }
+    }));
+    ctx.json(200, { items: found.filter((item): item is WatchProgress => item !== null).slice(0, 20) });
   });
 
   return hls;

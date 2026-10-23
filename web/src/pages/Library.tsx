@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { LibrarySummary, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Loading, Poster, Sheet, TabBar } from '../components/ui';
-import { Link, ago, bytes, copyText, useAsync, usePolling, useRouter, useToast } from '../lib';
+import { Link, ago, bytes, copyText, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
 
 function AddonCard() {
   const toast = useToast();
@@ -83,7 +83,8 @@ export function LibraryPage() {
   const toast = useToast();
   const { navigate } = useRouter();
   const { data, error, reload, setData } = useAsync(() => api.library(), []);
-  const [tab, setTab] = useState<'series' | 'movie'>('series');
+  const [tabParam, setTab] = useQueryState<'series' | 'movie'>('tab', 'series');
+  const tab = tabParam === 'movie' ? 'movie' : 'series';
   const [query, setQuery] = useState('');
   const [fixing, setFixing] = useState<LibrarySummary | null>(null);
   usePolling(() => { api.library().then(setData, () => undefined); }, 3000, Boolean(data?.scanning));
@@ -121,7 +122,15 @@ export function LibraryPage() {
           )}
           <div className="grid" style={{ marginTop: 16 }}>
             {items.map((item) => (
-              <div key={item.id} className="poster-card" onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}>
+              <div
+                key={item.id}
+                className="poster-card"
+                role="link"
+                tabIndex={0}
+                aria-label={item.imdbId ? item.title : `${item.title}: needs a match`}
+                onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}
+                onKeyDown={(event) => { if (event.key === 'Enter' && event.target === event.currentTarget) event.currentTarget.click(); }}
+              >
                 <div className="poster-wrap">
                   <Poster src={item.poster} title={item.title} />
                   {item.imdbId && (

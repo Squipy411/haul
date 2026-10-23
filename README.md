@@ -113,7 +113,11 @@ Your TorBox API key never reaches the browser: Haul fetches TorBox's playlists i
 
 TorBox needs a few seconds to start converting a file it hasn't streamed before, so Haul starts that work early: when a title page opens, when you point at Play, and before an episode ends for the next one. Only versions already in your TorBox list are started this way, so browsing never adds anything to your account. Pressing play on something you've streamed in the last hour reuses the same stream and starts in under a second. When Haul picks a version for you, it prefers English releases and starts on the English audio track when there's a choice.
 
-Keys: Space or K play/pause, ← → (or J L) 10 seconds, ↑ ↓ volume, M mute, F full screen, N next episode.
+Haul remembers the audio language and subtitles you last picked, so the next episode (or the next film) starts the same way. With TorBox the subtitles are burned into the picture, which can add a second or two to the start. The settings button in the player also has playback speed, from 0.75× to 2×.
+
+On a phone, tap the picture to show or hide the controls, double-tap the left or right side to skip 10 seconds (keep tapping to skip further), and drag along the bar to find a spot. The lock screen, headphones and keyboard media keys can play, pause, skip and go to the next episode.
+
+Keys: Space or K play/pause, ← → (or J L) 10 seconds, ↑ ↓ volume, M mute, C subtitles on or off, F full screen, N next episode.
 
 ## Phone notifications
 

@@ -6,7 +6,7 @@ import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
 import { Figure, Loading, Mark } from './components/ui';
 import { Link, bytes, speed, usePolling, useRouter } from './lib';
-import { CrumbContext, SearchContext, StatusContext } from './shell';
+import { CrumbContext, SearchContext, StatusContext, setTransferTitle, usePageTitle } from './shell';
 import { Discover } from './pages/Discover';
 
 // Home ships with the app; every other page is its own file, fetched in the background once the app is idle.
@@ -62,7 +62,21 @@ function Page({ path }: { path: string }) {
   if (path.startsWith('/downloads')) return <Downloads />;
   if (path.startsWith('/library')) return <LibraryPage />;
   if (path.startsWith('/settings')) return <SettingsPage />;
-  return <Discover />;
+  if (path === '/' || path === '/index.html') return <Discover />;
+  return <NotFound />;
+}
+
+function NotFound() {
+  usePageTitle('Not found');
+  return (
+    <div className="canvas">
+      <div className="gate-card" style={{ margin: '12vh auto 0' }}>
+        <h1>There's nothing here</h1>
+        <p>The link may be old, or the page may have moved.</p>
+        <div className="row"><Link to="/" className="btn primary">Go home</Link></div>
+      </div>
+    </div>
+  );
 }
 
 /** Free space on the fullest library disk, with every disk in the tooltip. */
@@ -149,6 +163,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
   }, []);
 
   const active = status.activeDownloads;
+  usePageTitle(crumb ?? NAV.find((item) => item.to !== '/' && item.match(path))?.label ?? null);
   return (
     <StatusContext.Provider value={status}>
     <CrumbContext.Provider value={setCrumb}>
@@ -263,7 +278,7 @@ export function App() {
 
   useEffect(() => {
     const active = status?.activeDownloads ?? 0;
-    document.title = active ? `${speed(status?.transferSpeed) || `${active} active`} · Haul` : 'Haul · TorBox player';
+    setTransferTitle(active ? speed(status?.transferSpeed) || `${active} active` : '');
   }, [status?.activeDownloads, status?.transferSpeed]);
 
   if (!status) {

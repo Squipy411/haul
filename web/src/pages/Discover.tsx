@@ -1,7 +1,7 @@
 import { Download, Info, Play, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Job, MetaPreview, WatchProgress } from '../../../shared/types';
-import { api, preparePlay } from '../api';
+import { api, preparePlay, rememberPreview } from '../api';
 import { Hero } from '../components/Hero';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
 import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib';
@@ -175,13 +175,13 @@ function ComingUp() {
 
 /** Popular titles with artwork, taking turns at the top of Home. */
 function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPreview[] }>; resume: WatchProgress[] }) {
-  const picks = (() => {
+  const picks = useMemo(() => {
     const shows = rows.find((row) => row.id === 'series-top')?.items ?? [];
     const movies = rows.find((row) => row.id === 'movie-top')?.items ?? [];
     const mixed: MetaPreview[] = [];
     for (let index = 0; index < 4; index += 1) for (const list of [shows, movies]) if (list[index]?.background) mixed.push(list[index]!);
     return mixed.slice(0, 6);
-  })();
+  }, [rows]);
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   // Load the next backdrop ahead of time so the switch doesn't flash.
@@ -216,7 +216,7 @@ function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPrevi
         )}
       >
         <Link to={watch} className="btn primary lg" onPointerEnter={() => preparePlay({ type: item.type, imdbId: item.id, season: item.type === 'series' ? entry?.season ?? 1 : undefined, episode: item.type === 'series' ? entry?.episode ?? 1 : undefined }, true)}><Play size={17} fill="currentColor" />{entry && !entry.upNext ? 'Resume' : 'Play'}</Link>
-        <Link to={`/title/${item.type}/${item.id}`} className="btn lg glass"><Info size={17} />More info</Link>
+        <Link to={`/title/${item.type}/${item.id}`} className="btn lg glass" onClick={() => rememberPreview(item)}><Info size={17} />More info</Link>
       </Hero>
     </div>
   );

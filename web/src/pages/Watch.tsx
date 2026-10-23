@@ -1,9 +1,10 @@
-import { Check, ChevronLeft, Languages, ListVideo, X, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import { Check, ChevronLeft, ListVideo, X, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings2, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaType, PlayCaps, PlaySession, WatchProgress } from '../../../shared/types';
-import { api, preparePlay } from '../api';
+import { api, languages, preparePlay } from '../api';
 import { useAsync, useRouter, useToast } from '../lib';
+import { usePageTitle } from '../shell';
 
 type HlsInstance = { destroy: () => void; loadSource: (url: string) => void; attachMedia: (media: HTMLMediaElement) => void; on: (event: string, handler: (event: string, data: any) => void) => void; startLoad: (at?: number) => void; recoverMediaError: () => void };
 
@@ -92,7 +93,7 @@ function EpisodesPanel({ session, onPick, onClose }: { session: PlaySession; onP
 }
 
 export function Watch({ type, id }: { type: MediaType; id: string }) {
-  const { search, navigate } = useRouter();
+  const { search, navigate, back } = useRouter();
   const season = search.has('s') ? Number(search.get('s')) : undefined;
   const episode = search.has('e') ? Number(search.get('e')) : undefined;
   const source = search.get('src') === 'torbox' ? 'torbox' : undefined;
@@ -103,7 +104,9 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
   // The title's artwork shows while the stream gets ready, instead of a black screen.
   const meta = useAsync(() => api.meta(type, id).catch(() => null), [type, id]);
   const still = type === 'series' ? meta.data?.episodes.find((entry) => entry.season === season && entry.episode === episode)?.thumbnail ?? meta.data?.background : meta.data?.background;
-  const leave = useCallback(() => navigate(`/title/${type}/${id}${season !== undefined ? `?season=${season}` : ''}`), [navigate, type, id, season]);
+  // Back to where the player was opened from (a real step back, so the browser's Back doesn't reopen
+  // the player); straight to the title page when the player was opened directly.
+  const leave = useCallback(() => back(`/title/${type}/${id}${season !== undefined ? `?season=${season}` : ''}`), [back, type, id, season]);
 
   useEffect(() => {
     let alive = true;
@@ -163,7 +166,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   // A converted stream starts where you left off, not at 0 with ffmpeg racing to catch up.
   const [offset, setOffset] = useState(session.mode === 'stream' ? Math.floor(session.resume ?? 0) : 0);
   const [audio, setAudio] = useState(session.audio);
-  const [subtitle, setSubtitle] = useState<string | null>(null);
+  const [subtitle, setSubtitle] = useState<string | null>(session.chosenSubtitle ?? null);
   const [cues, setCues] = useState<Cue[]>([]);
   const [time, setTime] = useState(session.resume ?? 0);
   const [duration, setDuration] = useState(session.duration ?? 0);
@@ -172,6 +175,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [waiting, setWaiting] = useState(true);
   const [volume, setVolume] = useState(() => { try { return Number(localStorage.getItem('haul.volume') ?? 1); } catch { return 1; } });
   const [muted, setMuted] = useState(false);
+  const [rate, setRate] = useState(1);
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -180,6 +184,12 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [countdown, setCountdown] = useState<number | null>(null);
   const [panel, setPanel] = useState(false);
   const [slow, setSlow] = useState(false);
+  /** Where the bar is being dragged to; the knob follows the finger and the seek happens on release. */
+  const [scrub, setScrub] = useState<number | null>(null);
+  /** The "10 seconds" bubble after a double tap or an arrow key, adding up while you keep going. */
+  const [flash, setFlash] = useState<{ side: 'back' | 'forward'; seconds: number; at: number } | null>(null);
+  const pointerKind = useRef('mouse');
+  const lastTap = useRef<{ at: number; side: 'back' | 'forward' | null }>({ at: 0, side: null });
   const startAt = useRef(session.resume ?? 0);
   const hideTimer = useRef<number>(0);
   const lastSaved = useRef(0);
@@ -187,6 +197,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const position = useRef(session.resume ?? 0);
 
   const absolute = useCallback(() => (video.current ? offset + video.current.currentTime : position.current), [offset]);
+  usePageTitle(session.subtitle ? `${session.title} ${session.subtitle.split(' · ')[0]}` : session.title);
 
   // Attach the source: a file, an HLS playlist through hls.js, or the browser's own HLS (Safari).
   useEffect(() => {
@@ -252,6 +263,16 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     return () => window.clearTimeout(timer);
   }, [waiting]);
 
+  // Kept across a new source (a track switch or a restart further on), which resets it.
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    element.playbackRate = rate;
+    const keep = () => { element.playbackRate = rate; };
+    element.addEventListener('loadedmetadata', keep);
+    return () => element.removeEventListener('loadedmetadata', keep);
+  }, [rate, url, offset, audio, mode, reload]);
+
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -289,9 +310,10 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const reveal = useCallback(() => {
     setVisible(true);
     window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => { if (!video.current?.paused && !panelOpen.current) setVisible(false); }, 3000);
+    hideTimer.current = window.setTimeout(() => { if (!video.current?.paused && !panelOpen.current && !menuOpen.current) setVisible(false); }, 3000);
   }, []);
   const panelOpen = useRef(false);
+  const menuOpen = useRef(false);
   useEffect(() => { panelOpen.current = panel; if (panel) setVisible(true); }, [panel]);
 
   const playEpisode = useCallback((season: number, episode: number) => {
@@ -339,6 +361,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   }, [absolute, session.stream, toast]);
 
   const chooseAudio = useCallback((index: number) => {
+    languages.save('audio', session.audios.find((track) => track.index === index)?.language);
     if (session.kind === 'torbox') { void rebuildTorbox({ audio: index }); return; }
     // A file played as it is can't change audio track, so it moves to a stream from this server.
     const resumeAt = absolute();
@@ -346,18 +369,81 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     if (mode === 'direct') { setUrl(`/api/play/local/${session.stream}/{start}/{audio}/playlist.m3u8`); setMode('stream'); }
     setOffset(Math.floor(resumeAt));
     setAudio(index);
-  }, [absolute, mode, rebuildTorbox, session.kind, session.stream]);
+  }, [absolute, mode, rebuildTorbox, session.audios, session.kind, session.stream]);
 
   const chooseSubtitle = useCallback((id: string | null) => {
+    const language = id === null ? undefined : session.subtitles.find((track) => track.id === id)?.language;
+    if (id === null || language) languages.save('subtitles', language);
     if (session.kind === 'torbox') { void rebuildTorbox({ subtitle: id === null ? null : Number(id.slice(3)) }); return; }
     setSubtitle(id);
-  }, [rebuildTorbox, session.kind]);
+  }, [rebuildTorbox, session.kind, session.subtitles]);
+
+  /** C turns subtitles off, or on in your usual language (else the first track). */
+  const toggleSubtitles = useCallback(() => {
+    if (!session.subtitles.length) return;
+    if (subtitle) { chooseSubtitle(null); return; }
+    const usual = languages.read().subtitleLanguage;
+    chooseSubtitle((session.subtitles.find((track) => usual && track.language === usual) ?? session.subtitles[0]!).id);
+  }, [chooseSubtitle, session.subtitles, subtitle]);
 
   const playNext = useCallback(() => {
     if (!session.next) return;
     save();
     navigate(`/watch/series/${session.imdbId}?s=${session.next.season}&e=${session.next.episode}`, { replace: true });
   }, [navigate, save, session]);
+
+  const skip = useCallback((seconds: number) => {
+    seek(absolute() + seconds);
+    const side = seconds < 0 ? 'back' : 'forward';
+    const now = performance.now();
+    setFlash((current) => ({ side, at: now, seconds: current && current.side === side && now - current.at < 900 ? current.seconds + Math.abs(seconds) : Math.abs(seconds) }));
+  }, [absolute, seek]);
+  useEffect(() => {
+    if (!flash) return;
+    const timer = window.setTimeout(() => setFlash(null), 900);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+
+  /** A mouse click plays or pauses. A tap shows or hides the controls, and a double tap on either side
+   *  skips 10 seconds, as phone video apps do. */
+  const onVideoClick = (event: React.MouseEvent<HTMLVideoElement>) => {
+    if (pointerKind.current === 'mouse') { togglePlay(); return; }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const across = (event.clientX - rect.left) / rect.width;
+    const side = across < 0.38 ? 'back' : across > 0.62 ? 'forward' : null;
+    const now = performance.now();
+    const previous = lastTap.current;
+    lastTap.current = { at: now, side };
+    if (side && previous.side === side && now - previous.at < 350) { skip(side === 'back' ? -10 : 10); return; }
+    if (visible && playing) { window.clearTimeout(hideTimer.current); setVisible(false); }
+    else reveal();
+  };
+
+  // Lock screen, headset and keyboard media keys.
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const media = navigator.mediaSession;
+    try {
+      media.metadata = new MediaMetadata({
+        title: session.subtitle ? session.subtitle.split(' · ').slice(1).join(' · ') || session.subtitle : session.title,
+        artist: session.subtitle ? `${session.title} · ${session.subtitle.split(' · ')[0]}` : 'Haul',
+        artwork: [session.poster, session.background].filter((src): src is string => Boolean(src)).map((src) => ({ src }))
+      });
+    } catch { /* older browsers */ }
+    const actions: [MediaSessionAction, MediaSessionActionHandler | null][] = [
+      ['play', () => { void video.current?.play(); }],
+      ['pause', () => video.current?.pause()],
+      ['seekbackward', (details) => skip(-(details.seekOffset ?? 10))],
+      ['seekforward', (details) => skip(details.seekOffset ?? 10)],
+      ['seekto', (details) => { if (details.seekTime !== undefined) seek(details.seekTime); }],
+      ['nexttrack', session.next ? playNext : null]
+    ];
+    for (const [action, handler] of actions) { try { media.setActionHandler(action, handler); } catch { /* not supported here */ } }
+    return () => {
+      for (const [action] of actions) { try { media.setActionHandler(action, null); } catch { /* not supported here */ } }
+      media.metadata = null;
+    };
+  }, [playNext, seek, session, skip]);
 
   const toggleFullscreen = useCallback(() => {
     const element = shell.current as any;
@@ -376,18 +462,22 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      // Buttons, sliders and menus handle their own keys.
-      if (event.target instanceof HTMLElement && event.target.closest('button, input, [role="menu"], [role="menuitemradio"]')) return;
+      // Menus keep their keys; a focused button keeps Space and Enter, the volume slider its arrows.
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const key = event.key.toLowerCase();
+      if (target?.closest('[role="menu"]')) return;
+      if (target?.closest('button') && (key === ' ' || key === 'enter')) return;
+      if (target?.closest('input') && (key === ' ' || key.startsWith('arrow'))) return;
       const element = video.current;
       if (!element) return;
-      const key = event.key.toLowerCase();
       const handled = ({
         ' ': togglePlay, k: togglePlay,
-        arrowleft: () => seek(absolute() - 10), j: () => seek(absolute() - 10),
-        arrowright: () => seek(absolute() + 10), l: () => seek(absolute() + 10),
+        arrowleft: () => skip(-10), j: () => skip(-10),
+        arrowright: () => skip(10), l: () => skip(10),
         arrowup: () => { setVolume((value) => Math.min(1, value + 0.1)); setMuted(false); },
         arrowdown: () => setVolume((value) => Math.max(0, value - 0.1)),
         m: () => setMuted((value) => !value),
+        c: toggleSubtitles,
         f: toggleFullscreen,
         n: playNext
       } as Record<string, (() => void) | undefined>)[key];
@@ -398,7 +488,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [absolute, playNext, reveal, seek, toggleFullscreen, togglePlay]);
+  }, [playNext, reveal, skip, toggleFullscreen, togglePlay, toggleSubtitles]);
 
   const onTimeUpdate = () => {
     const element = video.current!;
@@ -431,7 +521,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   useEffect(() => {
     if (nextSoon && session.next) preparePlay({ type: 'series', imdbId: session.imdbId, season: session.next.season, episode: session.next.episode }, true);
   }, [nextSoon, session.imdbId, session.next]);
-  const progressPct = duration ? Math.min(100, (time / duration) * 100) : 0;
+  const progressPct = duration ? Math.min(100, ((scrub ?? time) / duration) * 100) : 0;
   const bufferedPct = duration ? Math.min(100, (buffered / duration) * 100) : 0;
   const onBar = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -444,15 +534,15 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     <div
       ref={shell}
       className={`player ${visible || !playing ? 'show-controls' : 'hide-controls'}`}
-      onPointerMove={reveal}
-      onPointerDown={(event) => { if (event.pointerType !== 'mouse') reveal(); }}
+      onPointerMove={(event) => { if (event.pointerType === 'mouse') reveal(); }}
+      onPointerDown={(event) => { pointerKind.current = event.pointerType; if (event.pointerType !== 'mouse' && event.target !== video.current) reveal(); }}
     >
       <video
         ref={video}
         playsInline
         poster={session.background}
-        onClick={togglePlay}
-        onDoubleClick={toggleFullscreen}
+        onClick={onVideoClick}
+        onDoubleClick={() => { if (pointerKind.current === 'mouse') toggleFullscreen(); }}
         onPlay={() => { setPlaying(true); reveal(); }}
         onPause={() => { setPlaying(false); setVisible(true); save(); }}
         onWaiting={() => setWaiting(true)}
@@ -471,6 +561,12 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
 
       {waiting && !failure && (
         <div className="player-center"><span className="spinner large" /></div>
+      )}
+      {flash && (
+        <div key={flash.seconds} className={`player-flash ${flash.side}`} aria-hidden="true">
+          {flash.side === 'back' ? <RotateCcw size={22} /> : <RotateCw size={22} />}
+          <span className="num">{flash.seconds} seconds</span>
+        </div>
       )}
       {waiting && slow && !failure && (
         <div className="player-wait">{session.kind === 'torbox' ? 'TorBox is still preparing the video…' : session.converting ? 'Converting the video on your server…' : 'Still loading…'}</div>
@@ -515,11 +611,16 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
 
       <div className="player-bottom">
         <div
-          className="player-bar"
-          onPointerMove={(event) => setHover(onBar(event))}
-          onPointerLeave={() => setHover(null)}
-          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setHover(onBar(event)); }}
-          onPointerUp={(event) => { const at = onBar(event); seek(at.time); }}
+          className={`player-bar${scrub !== null ? ' scrubbing' : ''}`}
+          onPointerMove={(event) => {
+            const at = onBar(event);
+            setHover(at);
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) { setScrub(at.time); reveal(); }
+          }}
+          onPointerLeave={() => { if (scrub === null) setHover(null); }}
+          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); const at = onBar(event); setHover(at); setScrub(at.time); }}
+          onPointerUp={(event) => { if (scrub === null) return; const at = onBar(event); setScrub(null); setHover(null); seek(at.time); }}
+          onPointerCancel={() => { setScrub(null); setHover(null); }}
           role="slider"
           aria-label="Position"
           aria-valuemin={0}
@@ -544,34 +645,36 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           <span className="grow" />
           {session.next && <button className="player-icon" onClick={playNext} aria-label="Next episode" title="Next episode (N)"><SkipForward size={20} /></button>}
           {session.type === 'series' && <button className="player-icon" onClick={() => setPanel((value) => !value)} aria-label="Episodes" aria-expanded={panel} title="Episodes"><ListVideo size={20} /></button>}
-          {(session.audios.length > 1 || session.subtitles.length > 0) && (
-            <DropdownMenu.Root onOpenChange={(open) => { if (open) setVisible(true); }}>
-              <DropdownMenu.Trigger asChild>
-                <button className="player-icon" aria-label="Audio and subtitles"><Languages size={20} /></button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal container={shell.current}>
-                <DropdownMenu.Content className="popover player-menu" side="top" align="end" sideOffset={10}>
-                  {session.audios.length > 1 && (
-                    <>
-                      <DropdownMenu.Label className="player-menu-label">Audio</DropdownMenu.Label>
-                      <DropdownMenu.RadioGroup value={String(audio)} onValueChange={(value) => chooseAudio(Number(value))}>
-                        {session.audios.map((track) => <DropdownMenu.RadioItem key={track.index} value={String(track.index)} className="popover-item">{track.label}<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>)}
-                      </DropdownMenu.RadioGroup>
-                    </>
-                  )}
-                  {session.subtitles.length > 0 && (
-                    <>
-                      <DropdownMenu.Label className="player-menu-label">Subtitles</DropdownMenu.Label>
-                      <DropdownMenu.RadioGroup value={subtitle ?? 'off'} onValueChange={(value) => chooseSubtitle(value === 'off' ? null : value)}>
-                        <DropdownMenu.RadioItem value="off" className="popover-item">Off<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>
-                        {session.subtitles.map((track) => <DropdownMenu.RadioItem key={track.id} value={track.id} className="popover-item">{track.label}<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>)}
-                      </DropdownMenu.RadioGroup>
-                    </>
-                  )}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-          )}
+          <DropdownMenu.Root onOpenChange={(open) => { menuOpen.current = open; if (open) setVisible(true); else reveal(); }}>
+            <DropdownMenu.Trigger asChild>
+              <button className="player-icon" aria-label="Audio, subtitles and speed" title="Audio, subtitles and speed"><Settings2 size={20} /></button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal container={shell.current}>
+              <DropdownMenu.Content className="popover player-menu" side="top" align="end" sideOffset={10}>
+                <DropdownMenu.Label className="player-menu-label">Speed</DropdownMenu.Label>
+                <DropdownMenu.RadioGroup value={String(rate)} onValueChange={(value) => setRate(Number(value))} className="player-speeds">
+                  {[0.75, 1, 1.25, 1.5, 2].map((value) => <DropdownMenu.RadioItem key={value} value={String(value)} className="popover-item num" aria-label={value === 1 ? 'Normal speed' : `${value} times speed`}>{value === 1 ? '1×' : `${value}×`}</DropdownMenu.RadioItem>)}
+                </DropdownMenu.RadioGroup>
+                {session.audios.length > 1 && (
+                  <>
+                    <DropdownMenu.Label className="player-menu-label">Audio</DropdownMenu.Label>
+                    <DropdownMenu.RadioGroup value={String(audio)} onValueChange={(value) => chooseAudio(Number(value))}>
+                      {session.audios.map((track) => <DropdownMenu.RadioItem key={track.index} value={String(track.index)} className="popover-item">{track.label}<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>)}
+                    </DropdownMenu.RadioGroup>
+                  </>
+                )}
+                {session.subtitles.length > 0 && (
+                  <>
+                    <DropdownMenu.Label className="player-menu-label">Subtitles</DropdownMenu.Label>
+                    <DropdownMenu.RadioGroup value={subtitle ?? 'off'} onValueChange={(value) => chooseSubtitle(value === 'off' ? null : value)}>
+                      <DropdownMenu.RadioItem value="off" className="popover-item">Off<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>
+                      {session.subtitles.map((track) => <DropdownMenu.RadioItem key={track.id} value={track.id} className="popover-item">{track.label}<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator></DropdownMenu.RadioItem>)}
+                    </DropdownMenu.RadioGroup>
+                  </>
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
           {'pictureInPictureEnabled' in document && (document as any).pictureInPictureEnabled && (
             <button className="player-icon hide-xs" onClick={() => { const element = video.current as any; if (document.pictureInPictureElement) void document.exitPictureInPicture(); else void element?.requestPictureInPicture?.(); }} aria-label="Picture in picture"><PictureInPicture2 size={20} /></button>
           )}

@@ -8,6 +8,27 @@ export function useCrumb(crumb: string | null) {
   useEffect(() => { set(crumb); return () => set(null); }, [crumb, set]);
 }
 
+// The tab's name: what's on screen (the latest name set wins), plus the download speed while
+// something is downloading.
+const pageTitles: Array<{ page: string | null }> = [];
+let transferText = '';
+function applyTitle(): void {
+  const page = [...pageTitles].reverse().find((entry) => entry.page)?.page;
+  document.title = page || transferText ? [transferText, page, 'Haul'].filter(Boolean).join(' · ') : 'Haul · TorBox player';
+}
+export function setTransferTitle(text: string): void {
+  transferText = text;
+  applyTitle();
+}
+export function usePageTitle(page: string | null): void {
+  useEffect(() => {
+    const entry = { page };
+    pageTitles.push(entry);
+    applyTitle();
+    return () => { pageTitles.splice(pageTitles.indexOf(entry), 1); applyTitle(); };
+  }, [page]);
+}
+
 export const SearchContext = createContext<() => void>(() => undefined);
 export const useOpenSearch = () => useContext(SearchContext);
 

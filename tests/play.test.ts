@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Meta } from '../shared/types';
-import { type Probe, chooseMode, ffmpegArgs, parseProbe, srtToVtt, trackLabel } from '../server/media';
-import { clockSeconds, languageTier, nextEpisode, rewritePlaylist } from '../server/play';
+import { type Probe, chooseMode, ffmpegArgs, languageName, parseProbe, srtToVtt, trackLabel } from '../server/media';
+import { clockSeconds, languageTier, nextEpisode, rewritePlaylist, trackFor } from '../server/play';
 import { parseRelease } from '../server/release';
 import { ProgressStore, progressKey } from '../server/progress';
 
@@ -132,5 +132,29 @@ describe('languageTier', () => {
     expect(languageTier(parseRelease('Interstellar.2014.1080p.BluRay.ENG.x264'))).toBe(0);
     expect(languageTier(parseRelease('Интерстеллар / Interstellar [2014 BDRip 1080p] Dub + MVO + Original Eng'))).toBe(1);
     expect(languageTier(parseRelease('Интерстеллар (2014) BDRip 1080p Dub'))).toBe(2);
+  });
+});
+
+describe('language choices', () => {
+  it('reads codes and names the same way', () => {
+    expect(languageName('eng')).toBe('English');
+    expect(languageName('en')).toBe('English');
+    expect(languageName('english')).toBe('English');
+    expect(languageName('und')).toBeUndefined();
+    expect(languageName('tha')).toBe('Thai');
+    expect(languageName('xyz')).toBe('XYZ');
+    expect(trackLabel({ index: 0, language: 'eng', title: 'English (SDH)' }, 'subtitle')).toBe('English (SDH)');
+    expect(trackLabel({ index: 3, language: 'spa', title: 'Español (Latinoamérica)' }, 'subtitle')).toBe('Spanish · Español (Latinoamérica)');
+  });
+  it('picks a full subtitle track in your language before a forced one', () => {
+    const tracks = [
+      { language: 'spa', title: null },
+      { language: 'eng', title: 'Forced' },
+      { language: 'eng', title: 'SDH' }
+    ];
+    expect(trackFor(tracks, 'English')).toBe(2);
+    expect(trackFor([{ language: 'eng', forced: true }], 'English')).toBe(0);
+    expect(trackFor(tracks, 'Japanese')).toBe(-1);
+    expect(trackFor(tracks, undefined)).toBe(-1);
   });
 });

@@ -14,21 +14,65 @@ interface RouterValue {
 
 const RouterContext = createContext<RouterValue>({ path: '/', search: new URLSearchParams(), navigate: () => undefined, back: () => undefined });
 
+/** Where each history entry was scrolled to, so Back (and Forward) land where you were. */
+const scrolls = new Map<number, number>();
+let entryKey = 0;
+let shownKey = 0;
+let restoring = 0;
+const currentEntry = (): { key: number; depth: number } => window.history.state ?? { key: 0, depth: 0 };
+
+/** Pages fill in as their data arrives, so keep trying for a few seconds until the page is tall
+ *  enough, and give up the moment the person scrolls for themselves. */
+function restoreScroll(y: number): void {
+  window.cancelAnimationFrame(restoring);
+  let tries = 0;
+  const stop = () => {
+    window.cancelAnimationFrame(restoring);
+    for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) window.removeEventListener(type, stop);
+  };
+  for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown']) window.addEventListener(type, stop, { passive: true });
+  const step = () => {
+    window.scrollTo(0, y);
+    if (Math.abs(window.scrollY - y) < 2 || ++tries > 180) return stop();
+    restoring = window.requestAnimationFrame(step);
+  };
+  restoring = window.requestAnimationFrame(step);
+}
+
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [location, setLocation] = useState(() => ({ path: window.location.pathname, search: window.location.search }));
   const depth = useRef(0);
   useEffect(() => {
+    window.history.scrollRestoration = 'manual';
+    if (!window.history.state) window.history.replaceState({ key: ++entryKey, depth: 0 }, '');
+    else entryKey = Math.max(entryKey, currentEntry().key);
+    depth.current = currentEntry().depth;
+    shownKey = currentEntry().key;
+    const onScroll = () => { scrolls.set(shownKey, window.scrollY); };
     const onPop = () => {
-      depth.current = Math.max(0, depth.current - 1);
+      const entry = currentEntry();
+      depth.current = entry.depth;
+      shownKey = entry.key;
       setLocation({ path: window.location.pathname, search: window.location.search });
+      restoreScroll(scrolls.get(entry.key) ?? 0);
     };
+    window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('popstate', onPop);
+    };
   }, []);
   const navigate = useCallback((to: string, options: { replace?: boolean } = {}) => {
     if (to === window.location.pathname + window.location.search) return;
-    window.history[options.replace ? 'replaceState' : 'pushState'](null, '', to);
-    if (!options.replace) depth.current += 1;
+    const entry = currentEntry();
+    scrolls.set(entry.key, window.scrollY);
+    if (options.replace) window.history.replaceState({ key: entry.key, depth: entry.depth }, '', to);
+    else {
+      depth.current = entry.depth + 1;
+      shownKey = ++entryKey;
+      window.history.pushState({ key: shownKey, depth: depth.current }, '', to);
+    }
     const url = new URL(to, window.location.origin);
     setLocation({ path: url.pathname, search: url.search });
     if (!options.replace) window.scrollTo({ top: 0 });
@@ -42,6 +86,19 @@ export function RouterProvider({ children }: { children: ReactNode }) {
 }
 
 export const useRouter = () => useContext(RouterContext);
+
+/** A page setting kept in the address (?tab=movie), so Back and a reload bring it back as it was. */
+export function useQueryState<T extends string>(name: string, fallback: T): [T, (value: T) => void] {
+  const { path, search, navigate } = useRouter();
+  const value = (search.get(name) as T | null) ?? fallback;
+  const set = useCallback((next: T) => {
+    const query = new URLSearchParams(window.location.search);
+    if (next === fallback) query.delete(name); else query.set(name, next);
+    const text = query.toString();
+    navigate(`${path}${text ? `?${text}` : ''}`, { replace: true });
+  }, [name, fallback, path, navigate]);
+  return [value, set];
+}
 
 export function Link({ to, onClick, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) {
   const { navigate } = useRouter();

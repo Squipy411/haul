@@ -9,9 +9,24 @@ export class ApiError extends Error {
 /** Recent answers for pages you go back to: the catalog, titles and the library, kept a minute. */
 const recent = new Map<string, { at: number; value: Promise<unknown> }>();
 const CACHEABLE = /^\/api\/(home|meta\/|catalog\/|search\?)/;
+/** Requests that change nothing those pages show (getting a stream ready, playing), so keep the cache. */
+const HARMLESS = /^\/api\/(play\b|progress\b)/;
+
+/** The card you pressed, so a title page can show its artwork and name at once while the rest loads. */
+const previews = new Map<string, MetaPreview>();
+export function rememberPreview(item: MetaPreview): void {
+  previews.set(`${item.type}:${item.id}`, { ...previews.get(`${item.type}:${item.id}`), ...item });
+}
+export const previewOf = (type: MediaType, id: string): MetaPreview | undefined => previews.get(`${type}:${id}`);
+function rememberAll<T>(value: Promise<T>, items: (data: T) => MetaPreview[]): Promise<T> {
+  return value.then((data) => {
+    for (const item of items(data)) if (!previews.has(`${item.type}:${item.id}`)) previews.set(`${item.type}:${item.id}`, item);
+    return data;
+  });
+}
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  if (method !== 'GET') recent.clear();
+  if (method !== 'GET') { if (!HARMLESS.test(path)) recent.clear(); }
   else if (CACHEABLE.test(path)) {
     const hit = recent.get(path);
     if (hit && Date.now() - hit.at < 60_000) return hit.value as Promise<T>;
@@ -39,6 +54,16 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T;
 }
 
+/** The audio and subtitle languages last picked in the player, so the next episode starts the same way. */
+export const languages = {
+  read(): { audioLanguage?: string; subtitleLanguage?: string } {
+    try { return { audioLanguage: localStorage.getItem('haul.audio') || undefined, subtitleLanguage: localStorage.getItem('haul.subtitles') || undefined }; } catch { return {}; }
+  },
+  save(kind: 'audio' | 'subtitles', language: string | undefined): void {
+    try { if (language) localStorage.setItem(`haul.${kind}`, language); else localStorage.removeItem(`haul.${kind}`); } catch { /* storage blocked */ }
+  }
+};
+
 const preparedAt = new Map<string, number>();
 
 /**
@@ -49,7 +74,7 @@ export function preparePlay(target: { type: MediaType; imdbId: string; season?: 
   const key = `${target.type}:${target.imdbId}:${target.season}:${target.episode}:${stream}`;
   if (Date.now() - (preparedAt.get(key) ?? 0) < 30_000) return;
   preparedAt.set(key, Date.now());
-  void request('POST', '/api/play/prepare', { ...target, stream }).catch(() => undefined);
+  void request('POST', '/api/play/prepare', { ...target, stream, ...languages.read() }).catch(() => undefined);
 }
 
 export const api = {
@@ -66,15 +91,15 @@ export const api = {
   setup: (body: SetupRequest) => request<{ ok: true; account: TorboxAccount }>('POST', '/api/setup', body),
   checkFolders: () => request<{ results: Array<{ dir: string; ok: boolean; error?: string }> }>('POST', '/api/settings/check-folders'),
 
-  home: () => request<{ rows: HomeRow[] }>('GET', '/api/home'),
+  home: () => rememberAll(request<{ rows: HomeRow[] }>('GET', '/api/home'), (data) => data.rows.flatMap((row) => row.items)),
   catalog: (type: MediaType, id: string, options: { genre?: string; skip?: number } = {}) => {
     const query = new URLSearchParams();
     if (options.genre) query.set('genre', options.genre);
     if (options.skip) query.set('skip', String(options.skip));
-    return request<{ items: MetaPreview[] }>('GET', `/api/catalog/${type}/${id}?${query}`);
+    return rememberAll(request<{ items: MetaPreview[] }>('GET', `/api/catalog/${type}/${id}?${query}`), (data) => data.items);
   },
   newEpisodes: () => request<{ shows: NewEpisodes[] }>('GET', '/api/new-episodes'),
-  search: (q: string) => request<{ movies: MetaPreview[]; series: MetaPreview[] }>('GET', `/api/search?q=${encodeURIComponent(q)}`),
+  search: (q: string) => rememberAll(request<{ movies: MetaPreview[]; series: MetaPreview[] }>('GET', `/api/search?q=${encodeURIComponent(q)}`), (data) => [...data.movies, ...data.series]),
   meta: (type: MediaType, id: string) => request<Meta>('GET', `/api/meta/${type}/${id}`),
 
   movieReleases: (id: string) => request<{ releases: Release[] }>('GET', `/api/releases/movie/${id}`),
@@ -105,7 +130,7 @@ export const api = {
 
   addon: () => request<AddonInfo>('GET', '/api/addon'),
   regenerateAddon: () => request<AddonInfo>('POST', '/api/addon/regenerate'),
-  play: (body: { type: MediaType; imdbId: string; season?: number; episode?: number; source?: 'local' | 'torbox'; hash?: string; caps: PlayCaps }) => request<PlaySession>('POST', '/api/play', body),
+  play: (body: { type: MediaType; imdbId: string; season?: number; episode?: number; source?: 'local' | 'torbox'; hash?: string; caps: PlayCaps }) => request<PlaySession>('POST', '/api/play', { ...body, ...languages.read() }),
   playTracks: (stream: string, choice: { audio?: number; subtitle?: number | null }) => request<{ url: string; audio: number; subtitle: number | null }>('POST', `/api/play/torbox/${stream}/tracks`, choice),
   playInfo: () => request<{ ffmpeg: boolean; torbox: boolean }>('GET', '/api/play/info'),
   progressFor: (type: MediaType, imdbId: string) => request<{ items: WatchProgress[] }>('GET', `/api/progress/title/${type}/${imdbId}`),

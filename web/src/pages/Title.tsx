@@ -1,7 +1,7 @@
 import { Check, Download, Play } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Episode, Job, MediaType, Meta, Release, SeasonPlan, WatchProgress } from '../../../shared/types';
-import { api, preparePlay } from '../api';
+import { api, preparePlay, previewOf } from '../api';
 import { FollowControl } from '../components/Follow';
 import { Hero } from '../components/Hero';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
@@ -507,9 +507,20 @@ function PlayButton({ meta, resume }: { meta: Meta; resume?: WatchProgress }) {
 export function TitlePage({ type, id }: { type: MediaType; id: string }) {
   const { data: meta, error, reload } = useAsync(() => api.meta(type, id), [type, id]);
   const resume = useAsync(() => api.continueWatching().catch(() => ({ items: [] as WatchProgress[] })), [type, id]);
-  useCrumb(meta?.name ?? null);
+  const preview = previewOf(type, id);
+  useCrumb(meta?.name ?? preview?.name ?? null);
   if (error) return <div className="canvas"><ErrorNote message={error} onRetry={reload} /></div>;
-  if (!meta) return <div className="canvas"><div className="hero medium skeleton-hero" /></div>;
+  if (!meta) {
+    return (
+      <div className="canvas title-page">
+        {preview?.background
+          ? <Hero size="medium" background={preview.background} logo={preview.logo} title={preview.name} description={preview.description}
+              facts={join([preview.type === 'series' ? 'Series' : 'Movie', preview.releaseInfo, (preview.genres ?? []).slice(0, 3).join(', '), preview.imdbRating && `IMDb ${preview.imdbRating}`])} />
+          : <div className="hero medium skeleton-hero" />}
+        <Loading />
+      </div>
+    );
+  }
   const seasonCount = meta.seasons.filter((season) => season > 0).length;
   const entry = resume.data?.items.find((item) => item.imdbId === meta.id && item.type === meta.type);
   const toVersions = () => document.getElementById('versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
