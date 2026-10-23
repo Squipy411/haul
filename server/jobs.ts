@@ -23,6 +23,7 @@ interface Deps {
   settings: SettingsService;
   torbox: Torbox;
   onCompleted: (job: Job) => void;
+  onFailed?: (job: Job) => void;
 }
 
 const MAX_ATTEMPTS = 5;
@@ -122,8 +123,16 @@ export class JobManager {
     return job;
   }
 
+  private readonly reported = new Set<string>();
+
   private touch(job: Job): void {
     job.updatedAt = Date.now();
+    if (job.status === 'failed' && !this.reported.has(job.id)) {
+      this.reported.add(job.id);
+      try { this.deps.onFailed?.(job); } catch { /* notification trouble must not stop the queue */ }
+    } else if (job.status !== 'failed') {
+      this.reported.delete(job.id);
+    }
     this.file.save();
   }
 

@@ -9,8 +9,6 @@ services:
       - target: 60700
         published: "60700"
         protocol: tcp
-    environment:
-      TZ: America/Los_Angeles
     volumes:
       - type: bind
         source: /DATA/AppData/haul/data

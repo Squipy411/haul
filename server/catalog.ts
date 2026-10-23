@@ -77,12 +77,12 @@ export async function catalog(type: MediaType, id: 'top' | 'year' | 'imdbRating'
 export async function home(): Promise<HomeRow[]> {
   const year = String(new Date().getFullYear());
   const rows: Array<{ id: string; title: string; type: MediaType; load: () => Promise<MetaPreview[]> }> = [
-    { id: 'series-top', title: 'Popular series', type: 'series', load: () => catalog('series', 'top') },
-    { id: 'movie-top', title: 'Popular films', type: 'movie', load: () => catalog('movie', 'top') },
-    { id: 'series-new', title: `New series, ${year}`, type: 'series', load: () => catalog('series', 'year', { genre: year }) },
-    { id: 'movie-new', title: `New films, ${year}`, type: 'movie', load: () => catalog('movie', 'year', { genre: year }) },
-    { id: 'series-featured', title: 'Highest rated series', type: 'series', load: () => catalog('series', 'imdbRating') },
-    { id: 'movie-featured', title: 'Highest rated films', type: 'movie', load: () => catalog('movie', 'imdbRating') }
+    { id: 'series-top', title: 'Popular shows', type: 'series', load: () => catalog('series', 'top') },
+    { id: 'movie-top', title: 'Popular movies', type: 'movie', load: () => catalog('movie', 'top') },
+    { id: 'series-new', title: `New shows`, type: 'series', load: () => catalog('series', 'year', { genre: year }) },
+    { id: 'movie-new', title: `New movies`, type: 'movie', load: () => catalog('movie', 'year', { genre: year }) },
+    { id: 'series-featured', title: 'Top rated shows', type: 'series', load: () => catalog('series', 'imdbRating') },
+    { id: 'movie-featured', title: 'Top rated movies', type: 'movie', load: () => catalog('movie', 'imdbRating') }
   ];
   const settled = await Promise.allSettled(rows.map((row) => row.load()));
   return rows
@@ -146,6 +146,7 @@ export async function meta(type: MediaType, id: string): Promise<Meta> {
     director: raw.director || undefined,
     status: raw.status || undefined,
     trailer: trailer ? `https://www.youtube.com/watch?v=${trailer}` : undefined,
+    released: type === 'movie' ? raw.released || undefined : undefined,
     episodes,
     seasons
   };

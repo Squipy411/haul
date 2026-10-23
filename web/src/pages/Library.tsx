@@ -1,31 +1,31 @@
+import { Copy, ExternalLink } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { LibrarySummary, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
-import { Empty, ErrorNote, Loading, Modal, Poster, Seg } from '../components/ui';
+import { Empty, ErrorNote, Loading, Poster, Sheet, TabBar } from '../components/ui';
 import { ago, bytes, copyText, useAsync, usePolling, useRouter, useToast } from '../lib';
 
-function AddonPanel() {
+function AddonCard() {
   const toast = useToast();
   const { data, error } = useAsync(() => api.addon(), []);
   if (error) return <ErrorNote message={error} />;
-  if (!data) return null;
+  if (!data) return <div className="skeleton" style={{ height: 150, marginBottom: 26 }} />;
   return (
-    <section className="addon">
+    <section className="card addon-card">
       <div style={{ minWidth: 0 }}>
-        <span className="label">Nuvio / Stremio addon {data.enabled ? '' : '· off'}</span>
-        <h2>Watch this library in Nuvio</h2>
-        <p>Install the URL once in Nuvio (Settings → Addons → install from URL). You get your shows and films as catalogs, and a “Haul” stream on anything you own. Keep the URL private.</p>
-        <code className="url" title={data.manifestUrl}>{data.manifestUrl}</code>
+        <h2>Watch your library in Nuvio{data.enabled ? '' : ' (turned off in Settings)'}</h2>
+        <p>Add this address once in Nuvio under Settings → Addons, or in Stremio. Your shows and movies appear as their own rows, and anything you own plays straight from this machine. Keep it private.</p>
+        <div className="url" title={data.manifestUrl}>{data.manifestUrl}</div>
       </div>
-      <div className="row wrap">
-        <button className="btn primary" onClick={async () => toast(await copyText(data.manifestUrl) ? 'Addon URL copied' : 'Copy failed', 'ok')}>Copy URL</button>
-        <a className="btn" href={data.stremioUrl}>Open in Stremio</a>
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button className="btn primary" onClick={async () => toast(await copyText(data.manifestUrl) ? 'Addon address copied' : 'Copy failed. Select the address and copy it.')}><Copy size={15} />Copy address</button>
+        <a className="btn" href={data.stremioUrl}><ExternalLink size={15} />Open in Stremio</a>
       </div>
     </section>
   );
 }
 
-function MatchModal({ item, onClose, onSaved }: { item: LibrarySummary; onClose: () => void; onSaved: () => void }) {
+function MatchSheet({ item, onClose, onSaved }: { item: LibrarySummary; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
   const [query, setQuery] = useState(item.title);
   const [results, setResults] = useState<MetaPreview[]>([]);
@@ -49,7 +49,7 @@ function MatchModal({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
   const choose = async (imdbId: string | null) => {
     try {
       await api.matchLibraryItem(item.id, imdbId);
-      toast(imdbId ? 'Match saved' : 'Match removed');
+      toast(imdbId ? `Matched ${item.title}` : 'Match removed');
       onSaved();
       onClose();
     } catch (error) {
@@ -57,24 +57,25 @@ function MatchModal({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
     }
   };
   return (
-    <Modal
-      title="Match this folder"
-      subtitle={<span className="mono" style={{ fontSize: 12 }}>{item.folder}</span>}
-      onClose={onClose}
-      footer={<><span className="hint">The match sets the poster and which title plays these files in Nuvio.</span>{item.matched && <button className="btn sm danger" onClick={() => choose(null)}>Remove match</button>}</>}
+    <Sheet
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title="Which title is this folder?"
+      description={item.folder}
+      footer={<><span className="hint">The match sets the artwork, and which title plays these files in Nuvio.</span>{item.matched && <button className="btn sm danger" onClick={() => choose(null)}>Remove match</button>}</>}
     >
-      <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus style={{ marginBottom: 18 }} />
-      {loading && <Loading text="Searching" />}
+      <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus style={{ marginBottom: 18 }} aria-label="Search for the title" />
+      {loading && <Loading text="Searching…" />}
       <div className="grid">
         {results.map((result) => (
           <button key={result.id} className="poster-card" style={{ background: 'none', border: 0, padding: 0, textAlign: 'left' }} onClick={() => choose(result.id)}>
             <Poster src={result.poster} title={result.name} />
-            <div className="poster-name ellipsis">{result.name}</div>
+            <div className="poster-name truncate">{result.name}</div>
             <div className="poster-sub">{result.releaseInfo}</div>
           </button>
         ))}
       </div>
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -82,76 +83,60 @@ export function LibraryPage() {
   const toast = useToast();
   const { navigate } = useRouter();
   const { data, error, reload, setData } = useAsync(() => api.library(), []);
-  const [type, setType] = useState<'series' | 'movie'>('series');
+  const [tab, setTab] = useState<'series' | 'movie'>('series');
   const [query, setQuery] = useState('');
   const [fixing, setFixing] = useState<LibrarySummary | null>(null);
   usePolling(() => { api.library().then(setData, () => undefined); }, 3000, Boolean(data?.scanning));
 
   const all = data?.items ?? [];
-  const items = all.filter((item) => item.type === type && (!query || item.title.toLowerCase().includes(query.toLowerCase())));
   const shows = all.filter((item) => item.type === 'series');
-  const films = all.filter((item) => item.type === 'movie');
-  const unmatched = all.filter((item) => !item.matched).length;
-
-  const rescan = async () => {
-    await api.scanLibrary();
-    toast('Rescanning folders');
-    setTimeout(reload, 1200);
-  };
+  const movies = all.filter((item) => item.type === 'movie');
+  const items = (tab === 'series' ? shows : movies).filter((item) => !query || item.title.toLowerCase().includes(query.toLowerCase()));
+  const unmatched = (tab === 'series' ? shows : movies).filter((item) => !item.matched).length;
 
   return (
-    <div className="page">
-      <div className="page-head">
+    <div className="canvas">
+      <div className="title-row">
         <div>
-          <h1 className="page-title">Library</h1>
-          <div className="sub">Everything in your Movies and TV Shows folders, including what you had before Haul.</div>
+          <h1>Library</h1>
+          {data && <div className="sub num">{shows.length} shows · {movies.length} movies · {bytes(all.reduce((sum, item) => sum + item.size, 0))} · checked {ago(data.scannedAt)}</div>}
         </div>
-        <button className="btn" onClick={rescan} disabled={data?.scanning}>{data?.scanning ? 'Scanning…' : 'Rescan folders'}</button>
+        <button className="btn" disabled={data?.scanning} onClick={async () => { await api.scanLibrary(); toast('Checking your folders for new files'); setTimeout(reload, 1200); }}>
+          {data?.scanning ? <><span className="spinner" />Checking</> : 'Check folders'}
+        </button>
       </div>
-      <AddonPanel />
+      <AddonCard />
       {error && <ErrorNote message={error} onRetry={reload} />}
       {!data && !error && <Loading />}
       {data && (
         <>
-          <div className="row wrap" style={{ justifyContent: 'space-between', gap: 16, marginBottom: 24 }}>
-            <div className="figures-row">
-              <span><b>{shows.length}</b>series</span>
-              <span><b>{films.length}</b>films</span>
-              <span><b>{bytes(all.reduce((sum, item) => sum + item.size, 0))}</b>on disk</span>
-              {unmatched > 0 && <span className="warn"><b className="warn">{unmatched}</b>unmatched</span>}
-              <span style={{ alignSelf: 'center' }}>scanned {ago(data.scannedAt)}</span>
-            </div>
-            <div className="row">
-              <input className="input" style={{ width: 200, height: 30 }} placeholder="Filter" value={query} onChange={(event) => setQuery(event.target.value)} />
-              <Seg value={type} onChange={setType} options={[{ value: 'series', label: 'SERIES' }, { value: 'movie', label: 'FILMS' }]} />
-            </div>
+          <TabBar value={tab} onChange={setTab} tabs={[{ value: 'series', label: 'Shows', count: shows.length }, { value: 'movie', label: 'Movies', count: movies.length }]} />
+          <div className="toolbar">
+            <input className="input filter" placeholder={`Filter ${tab === 'series' ? 'shows' : 'movies'}`} value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter the library" />
+            <span className="count">{unmatched > 0 ? `${unmatched} need a match · ` : ''}{items.length} {tab === 'series' ? 'shows' : 'movies'}</span>
           </div>
           {!items.length && (
-            <Empty title={query ? 'No matches' : `No ${type === 'series' ? 'series' : 'films'} yet`}>
-              {query ? 'Try another name.' : 'Downloads land here. Existing folders show up after the next scan.'}
+            <Empty title={query ? 'Nothing matches' : `No ${tab === 'series' ? 'shows' : 'movies'} yet`}>
+              {query ? 'Try another name.' : 'Downloads land here. Folders you already had appear after the next check.'}
             </Empty>
           )}
-          <div className="grid">
+          <div className="grid" style={{ marginTop: 16 }}>
             {items.map((item) => (
               <div key={item.id} className="poster-card" onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}>
                 <Poster src={item.poster} title={item.title} />
-                <div className="poster-name ellipsis" title={item.title}>{item.title}</div>
-                <div className="poster-sub" style={{ justifyContent: 'space-between' }}>
-                  <span>{item.type === 'series' ? `${item.fileCount} ep` : item.year ?? bytes(item.size)}</span>
-                  <button
-                    className="btn quiet sm"
-                    style={{ height: 'auto', padding: 0, fontSize: 11, color: item.matched ? undefined : 'var(--warn)' }}
-                    onClick={(event) => { event.stopPropagation(); setFixing(item); }}
-                  >
-                    {item.matched ? 'match' : 'unmatched'}
-                  </button>
+                <div className="poster-name truncate" title={item.title}>{item.title}</div>
+                <div className="poster-sub row" style={{ justifyContent: 'space-between' }}>
+                  <span>{item.type === 'series' ? `${item.fileCount} episode${item.fileCount === 1 ? '' : 's'}` : item.year ?? bytes(item.size)}</span>
+                  {item.matched
+                    ? <button className="btn ghost sm" style={{ height: 20, padding: '0 6px', fontSize: 12 }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Change</button>
+                    : <button className="pill warning" style={{ border: 0, cursor: 'pointer' }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Needs a match</button>}
                 </div>
               </div>
             ))}
           </div>
         </>
       )}
-      {fixing && <MatchModal item={fixing} onClose={() => setFixing(null)} onSaved={reload} />}
+      {fixing && <MatchSheet item={fixing} onClose={() => setFixing(null)} onSaved={reload} />}
     </div>
   );
 }

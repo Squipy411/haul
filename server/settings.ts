@@ -36,6 +36,7 @@ function defaults(options: ServerOptions): StoredSettings {
       preferCached: true,
       allowHdr: true,
       allowUpscaled: false,
+      preferLarger: true,
       blockedWords: []
     },
     downloads: {
@@ -52,6 +53,16 @@ function defaults(options: ServerOptions): StoredSettings {
       publicUrl: options.defaults.publicUrl
     },
     library: { rescanMinutes: 30 },
+    notifications: {
+      enabled: false,
+      ntfyServer: 'https://ntfy.sh',
+      // A long random topic: on ntfy.sh anyone who knows the name can read it.
+      ntfyTopic: `haul-${randomToken(12).replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`,
+      ntfyToken: '',
+      discordWebhook: '',
+      downloadFinished: true,
+      downloadFailed: true
+    },
     passwordHash: '',
     sessionSecret: randomToken(32),
     streamSecret: randomToken(32)
@@ -98,6 +109,7 @@ export class SettingsService {
     data.downloads = { ...base.downloads, ...data.downloads };
     data.addon = { ...base.addon, ...data.addon };
     data.library = { ...base.library, ...data.library };
+    data.notifications = { ...base.notifications, ...data.notifications };
     if (!data.torboxApiKey && options.defaults.torboxApiKey) data.torboxApiKey = options.defaults.torboxApiKey;
     this.file.flush();
   }
@@ -115,6 +127,7 @@ export class SettingsService {
     const key = rest.torboxApiKey;
     return {
       ...rest,
+      notifications: { ...rest.notifications, ntfyToken: rest.notifications.ntfyToken ? `${MASK}${rest.notifications.ntfyToken.slice(-4)}` : '' },
       torboxApiKey: key ? `${MASK}${key.slice(-4)}` : '',
       passwordSet: Boolean(passwordHash)
     };
@@ -144,6 +157,7 @@ export class SettingsService {
       if (typeof quality.preferCached === 'boolean') data.quality.preferCached = quality.preferCached;
       if (typeof quality.allowHdr === 'boolean') data.quality.allowHdr = quality.allowHdr;
       if (typeof quality.allowUpscaled === 'boolean') data.quality.allowUpscaled = quality.allowUpscaled;
+      if (typeof quality.preferLarger === 'boolean') data.quality.preferLarger = quality.preferLarger;
       if (Array.isArray(quality.blockedWords)) data.quality.blockedWords = quality.blockedWords.map((word) => String(word).trim()).filter(Boolean);
     }
     if (patch.downloads) {
@@ -158,11 +172,28 @@ export class SettingsService {
       if (typeof patch.addon.name === 'string' && patch.addon.name.trim()) data.addon.name = patch.addon.name.trim().slice(0, 60);
       if (patch.addon.publicUrl !== undefined) data.addon.publicUrl = cleanUrl(patch.addon.publicUrl);
     }
+    if (patch.notifications) {
+      const notifications = patch.notifications;
+      if (typeof notifications.enabled === 'boolean') data.notifications.enabled = notifications.enabled;
+      if (notifications.ntfyServer !== undefined) data.notifications.ntfyServer = cleanUrl(notifications.ntfyServer) || 'https://ntfy.sh';
+      if (typeof notifications.ntfyTopic === 'string') data.notifications.ntfyTopic = notifications.ntfyTopic.trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+      if (typeof notifications.ntfyToken === 'string' && !notifications.ntfyToken.includes('•')) data.notifications.ntfyToken = notifications.ntfyToken.trim();
+      if (notifications.discordWebhook !== undefined) {
+        const hook = cleanUrl(notifications.discordWebhook);
+        data.notifications.discordWebhook = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(hook) ? hook : '';
+      }
+      if (typeof notifications.downloadFinished === 'boolean') data.notifications.downloadFinished = notifications.downloadFinished;
+      if (typeof notifications.downloadFailed === 'boolean') data.notifications.downloadFailed = notifications.downloadFailed;
+    }
     if (patch.library?.rescanMinutes !== undefined) data.library.rescanMinutes = clampNumber(patch.library.rescanMinutes, 0, 1440, 30);
-    if (typeof patch.password === 'string') data.passwordHash = patch.password ? hashPassword(patch.password) : '';
     this.file.flush();
     for (const listener of this.listeners) listener();
     return this.publicView();
+  }
+
+  setPassword(password: string | null): void {
+    this.file.data.passwordHash = password ? hashPassword(password) : '';
+    this.file.flush();
   }
 
   regenerateAddonToken(): void {

@@ -1,6 +1,7 @@
 import {
   type AnchorHTMLAttributes, type MouseEvent, type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState
 } from 'react';
+import { Toaster, toast } from 'sonner';
 
 // ---------- Router ----------
 interface RouterValue {
@@ -58,26 +59,21 @@ export function Link({ to, onClick, ...rest }: AnchorHTMLAttributes<HTMLAnchorEl
   );
 }
 
-// ---------- Toasts ----------
-interface Toast { id: number; message: ReactNode; kind: 'ok' | 'error' }
-const ToastContext = createContext<(message: ReactNode, kind?: Toast['kind']) => void>(() => undefined);
+// ---------- Toasts (Sonner) ----------
+type Notify = (message: ReactNode, kind?: 'ok' | 'error') => void;
+const notify: Notify = (message, kind = 'ok') => { if (kind === 'error') toast.error(message); else toast(message); };
+const ToastContext = createContext<Notify>(notify);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const nextId = useRef(1);
-  const push = useCallback((message: ReactNode, kind: Toast['kind'] = 'ok') => {
-    const id = nextId.current++;
-    setToasts((current) => [...current.slice(-3), { id, message, kind }]);
-    setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), kind === 'error' ? 7000 : 4500);
-  }, []);
   return (
-    <ToastContext.Provider value={push}>
+    <ToastContext.Provider value={notify}>
       {children}
-      <div className="toasts" role="status" aria-live="polite">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={`toast ${toast.kind === 'error' ? 'error' : ''}`}>{toast.message}</div>
-        ))}
-      </div>
+      <Toaster
+        theme="dark"
+        position="bottom-right"
+        gap={8}
+        toastOptions={{ style: { background: '#1c1c1c', border: '0', borderRadius: '14px', color: '#fff', fontSize: '14px' } }}
+      />
     </ToastContext.Provider>
   );
 }
@@ -158,6 +154,7 @@ export function airDate(value?: string): string {
 }
 
 export function pad(value: number): string {
+  // Episode codes such as S01E04, not list numbering. taste-skill-ignore
   return String(value).padStart(2, '0');
 }
 

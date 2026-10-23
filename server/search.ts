@@ -84,6 +84,8 @@ export function scoreRelease(release: Omit<Release, 'score'>, quality: Quality, 
     : release.fileSize ?? (release.totalSize ? release.totalSize / Math.max(1, episodeCount) : undefined);
   const limit = release.kind === 'movie' ? quality.maxMovieGB : quality.maxEpisodeGB;
   if (limit > 0 && perItem && perItem > limit * GB) score -= 90;
+  // Bigger files carry more picture: among otherwise equal versions, the larger one wins.
+  if (quality.preferLarger && perItem) score += Math.min(30, Math.log2(perItem / GB * 4 + 1) * 6);
   return Math.round(score);
 }
 
@@ -97,9 +99,9 @@ export class SearchService {
 
   constructor(private readonly deps: SearchDeps) {}
 
-  private cached(key: string, load: () => Promise<Release[]>): Promise<Release[]> {
+  private cached(key: string, load: () => Promise<Release[]>, fresh = false): Promise<Release[]> {
     const hit = this.cache.get(key);
-    if (hit && hit.expires > Date.now()) return hit.value;
+    if (!fresh && hit && hit.expires > Date.now()) return hit.value;
     const value = load();
     this.cache.set(key, { expires: Date.now() + 8 * 60_000, value });
     value.catch(() => this.cache.delete(key));
@@ -167,12 +169,12 @@ export class SearchService {
     }).sort((a, b) => b.score - a.score || (b.seeders ?? 0) - (a.seeders ?? 0));
   }
 
-  movie(imdbId: string): Promise<Release[]> {
-    return this.cached(`movie:${imdbId}`, async () => this.build(await this.gather('movie', imdbId, imdbId), undefined, 1));
+  movie(imdbId: string, options: { fresh?: boolean } = {}): Promise<Release[]> {
+    return this.cached(`movie:${imdbId}`, async () => this.build(await this.gather('movie', imdbId, imdbId), undefined, 1), options.fresh);
   }
 
   /** All releases that contain one episode: single-episode torrents and packs. */
-  episode(imdbId: string, season: number, episode: number): Promise<Release[]> {
+  episode(imdbId: string, season: number, episode: number, options: { fresh?: boolean } = {}): Promise<Release[]> {
     return this.cached(`ep:${imdbId}:${season}:${episode}`, async () => {
       const releases = await this.build(await this.gather('series', `${imdbId}:${season}:${episode}`, imdbId, season, episode), season, 1);
       return releases.filter((release) => {
@@ -183,7 +185,7 @@ export class SearchService {
         }
         return !release.packSeasons?.length || release.packSeasons.includes(season);
       });
-    });
+    }, options.fresh);
   }
 
   /** Season packs for one season, found through the season's first episode. */

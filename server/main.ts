@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { registerAddon } from './addon.js';
-import { registerApi } from './api.js';
+import { OPEN_ROUTES, registerApi } from './api.js';
+import { Auth } from './auth.js';
 import { type ServerOptions, VERSION, optionsFromEnv } from './config.js';
 import { type Context, HttpError, Router, parseCookies, readBody, requestBaseUrl, serveStatic } from './http.js';
 import { JobManager } from './jobs.js';
@@ -10,29 +11,55 @@ import { Library } from './library.js';
 import { SearchService } from './search.js';
 import { SettingsService } from './settings.js';
 import { Torbox } from './torbox.js';
+import * as catalog from './catalog.js';
+import { FollowService } from './follows.js';
+import { Notifier } from './notify.js';
+import { UpdateChecker } from './updates.js';
 
 export interface RunningServer {
   port: number;
   url: string;
+  /** Session cookie for the Windows app's own window (desktop mode only). */
+  desktopSession: () => { name: string; value: string; expires: number };
   close: () => Promise<void>;
 }
 
-const OPEN_API = new Set(['/api/status', '/api/login', '/api/logout']);
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export async function startServer(overrides: Partial<ServerOptions> = {}): Promise<RunningServer> {
   const options = optionsFromEnv(overrides);
   fs.mkdirSync(options.dataDir, { recursive: true });
 
   const settings = new SettingsService(options);
+  const auth = new Auth(settings, options.auth);
+  const updates = new UpdateChecker();
   const torbox = new Torbox(() => settings.value.torboxApiKey);
   const search = new SearchService({ torbox, settings: () => ({ ...settings.publicView(), torboxApiKey: settings.value.torboxApiKey }) });
   const library = new Library(options, settings);
-  const jobs = new JobManager({ options, settings, torbox, onCompleted: (job) => library.recordDownload(job) });
+  const notifier = new Notifier(settings);
+  const where = (job: { type: string; imdbId: string; season?: number }) => `/title/${job.type}/${job.imdbId}${job.season !== undefined ? `?season=${job.season}` : ''}`;
+  const jobs = new JobManager({
+    options,
+    settings,
+    torbox,
+    onCompleted: (job) => {
+      library.recordDownload(job);
+      if (settings.value.notifications.downloadFinished) {
+        void notifier.send({ title: `${job.title} is in your library`, message: job.label === 'Movie' ? 'Ready to watch.' : `${job.label} is ready to watch.`, path: where(job), priority: 3, tags: ['white_check_mark'] });
+      }
+    },
+    onFailed: (job) => {
+      if (settings.value.notifications.downloadFailed) {
+        void notifier.send({ title: `${job.title}: download failed`, message: job.error ?? 'Open Haul to try again.', path: '/downloads', priority: 4, tags: ['warning'] });
+      }
+    }
+  });
+  const follows = new FollowService({ options, settings, catalog, search, jobs, library, notifier });
 
   const router = new Router();
   router.get('/health', (ctx) => ctx.json(200, { status: 'ok', version: VERSION }));
   registerAddon(router, { settings, library });
-  const { isAuthenticated } = registerApi(router, { options, settings, torbox, search, jobs, library });
+  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://haul.local');
@@ -60,8 +87,14 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       const match = router.match(req.method || 'GET', url.pathname);
       if (match) {
         ctx.params = match.params;
-        if (url.pathname.startsWith('/api/') && !OPEN_API.has(url.pathname) && !isAuthenticated(ctx)) {
-          return ctx.json(401, { error: 'Sign in to Haul first.' });
+        if (url.pathname.startsWith('/api/')) {
+          // Browsers can't send this header cross-site without a CORS preflight, which Haul never grants.
+          if (!SAFE_METHODS.has(req.method || 'GET') && req.headers['x-haul-request'] !== '1') {
+            return ctx.json(403, { error: 'Missing request header.' });
+          }
+          if (!OPEN_ROUTES.has(url.pathname) && !auth.isAuthenticated(ctx)) {
+            return ctx.json(401, { error: 'Sign in to Haul first.' });
+          }
         }
         await match.handler(ctx);
         return;
@@ -84,12 +117,20 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   const port = typeof address === 'object' && address ? address.port : options.port;
   library.start();
   jobs.start();
+  updates.start();
+  follows.start();
   console.log(`[haul] v${VERSION} listening on http://${options.host === '0.0.0.0' ? 'localhost' : options.host}:${port}`);
 
   return {
     port,
     url: `http://127.0.0.1:${port}`,
+    desktopSession: () => {
+      if (options.auth !== 'desktop') throw new Error('Desktop sessions are only for the Windows app.');
+      return auth.mint('d');
+    },
     close: async () => {
+      updates.stop();
+      follows.stop();
       jobs.stop();
       library.stop();
       await new Promise<void>((resolve) => server.close(() => resolve()));

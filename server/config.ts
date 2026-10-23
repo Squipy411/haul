@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { AuthMode } from './auth.js';
 
 export interface ServerOptions {
   port: number;
@@ -7,6 +8,7 @@ export interface ServerOptions {
   dataDir: string;
   webDir: string;
   desktop: boolean;
+  auth: AuthMode;
   defaults: {
     torboxApiKey: string;
     moviesDir: string;
@@ -17,7 +19,7 @@ export interface ServerOptions {
   owner?: { uid: number; gid: number };
 }
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 
 function numberEnv(name: string): number | undefined {
   const value = Number(process.env[name]);
@@ -36,6 +38,8 @@ export function optionsFromEnv(overrides: Partial<ServerOptions> = {}): ServerOp
     // dist/server.mjs serves dist/web; in development the server runs from source.
     webDir: process.env.WEB_DIR || path.resolve(here, 'web'),
     desktop: false,
+    // HAUL_AUTH=none is only for installs behind a proxy that does its own login.
+    auth: process.env.HAUL_AUTH === 'none' ? 'none' : 'password',
     defaults: {
       torboxApiKey: process.env.TORBOX_API_KEY || '',
       moviesDir: process.env.MOVIES_DIR || path.join(mediaRoot, 'Movies'),

@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Meta, MediaType, Release, SettingsPatch, Status } from '../shared/types.js';
+import type { Meta, MediaType, NewEpisodes, Release, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
 import { addonUrls } from './addon.js';
+import { type Auth, clientIp, validPassword } from './auth.js';
 import * as catalog from './catalog.js';
 import { type ServerOptions, VERSION } from './config.js';
 import { type Context, HttpError, type Router } from './http.js';
@@ -11,18 +12,25 @@ import type { Library } from './library.js';
 import type { SearchService } from './search.js';
 import type { SettingsService } from './settings.js';
 import type { Torbox } from './torbox.js';
+import type { FollowService } from './follows.js';
+import type { Notifier } from './notify.js';
+import type { UpdateChecker } from './updates.js';
 
 interface Deps {
   options: ServerOptions;
   settings: SettingsService;
+  auth: Auth;
   torbox: Torbox;
   search: SearchService;
   jobs: JobManager;
   library: Library;
+  updates: UpdateChecker;
+  follows: FollowService;
+  notifier: Notifier;
 }
 
-const SESSION_COOKIE = 'haul_session';
-const SESSION_DAYS = 30;
+/** Routes that answer before sign-in. Setup routes also check that setup is actually open. */
+export const OPEN_ROUTES = new Set(['/api/status', '/api/login', '/api/logout', '/api/setup', '/api/setup/defaults', '/api/setup/torbox-test']);
 
 const asType = (value: string | undefined): MediaType => {
   if (value === 'movie' || value === 'series') return value;
@@ -46,23 +54,8 @@ function aired(released?: string): boolean {
   return !released || Date.parse(released) <= Date.now() + 12 * 60 * 60 * 1000;
 }
 
-export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx: Context) => boolean } {
-  const { settings, torbox, search, jobs, library, options } = deps;
-
-  const sign = (value: string) => crypto.createHmac('sha256', settings.value.sessionSecret).update(value).digest('base64url');
-  const isAuthenticated = (ctx: Context) => {
-    if (!settings.value.passwordHash) return true;
-    const cookie = ctx.cookies[SESSION_COOKIE];
-    if (!cookie) return false;
-    const [expires, signature] = cookie.split('.');
-    if (!expires || !signature || Number(expires) < Date.now()) return false;
-    const expected = sign(expires);
-    return expected.length === signature.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
-  };
-  const setSession = (ctx: Context) => {
-    const expires = String(Date.now() + SESSION_DAYS * 86_400_000);
-    ctx.res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${expires}.${sign(expires)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_DAYS * 86_400}`);
-  };
+export function registerApi(router: Router, deps: Deps): void {
+  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier } = deps;
 
   const withOwnership = (meta: Meta): Meta => {
     if (meta.type === 'series') {
@@ -73,34 +66,82 @@ export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx
     return { ...meta, inLibrary: owned, ownedMovie: owned };
   };
 
-  router.get('/api/status', (ctx) => {
-    const status: Status = {
+  const status = (ctx: Context): Status => {
+    const authenticated = auth.isAuthenticated(ctx);
+    // Remember the address people use, so a tapped notification opens the same place.
+    if (authenticated) notifier.baseUrl = ctx.baseUrl;
+    return {
       version: VERSION,
-      authRequired: Boolean(settings.value.passwordHash),
-      authenticated: isAuthenticated(ctx),
-      setupComplete: Boolean(settings.value.torboxApiKey),
+      authenticated,
+      needsPassword: auth.locked,
+      passwordSet: Boolean(settings.value.passwordHash),
+      canRemovePassword: auth.canRemovePassword,
+      setupComplete: Boolean(settings.value.torboxApiKey) && !auth.locked,
       torboxConfigured: torbox.configured,
-      activeDownloads: jobs.activeCount(),
-      libraryCounts: library.counts(),
-      desktop: options.desktop
+      // Signed-out visitors learn nothing about the library or queue.
+      activeDownloads: authenticated ? jobs.activeCount() : 0,
+      transferSpeed: authenticated ? jobs.jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0) : 0,
+      libraryCounts: authenticated ? library.counts() : { movies: 0, series: 0, episodes: 0 },
+      desktop: options.desktop,
+      update: authenticated ? updates.available : null
     };
-    ctx.json(200, status);
-  });
+  };
+
+  router.get('/api/status', (ctx) => ctx.json(200, status(ctx), { 'Cache-Control': 'no-store' }));
 
   router.post('/api/login', async (ctx) => {
+    const ip = clientIp(ctx);
+    const wait = auth.waitFor(ip);
+    if (wait > 0) return ctx.json(429, { error: `Too many attempts. Try again in ${Math.ceil(wait / 1000)} s.` });
     const body = await ctx.body();
-    if (!settings.value.passwordHash) return ctx.json(200, { ok: true });
+    if (!settings.value.passwordHash) {
+      return ctx.json(400, { error: options.desktop ? 'No password is set. Set one in the Haul app under Settings → Password to sign in from other devices.' : 'Finish setup first.' });
+    }
     if (typeof body.password !== 'string' || !settings.checkPassword(body.password)) {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      auth.recordFailure(ip);
+      await new Promise((resolve) => setTimeout(resolve, 500));
       return ctx.json(401, { error: 'Wrong password' });
     }
-    setSession(ctx);
+    auth.recordSuccess(ip);
+    auth.startSession(ctx);
     ctx.json(200, { ok: true });
   });
 
   router.post('/api/logout', (ctx) => {
-    ctx.res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+    auth.endSession(ctx);
     ctx.json(200, { ok: true });
+  });
+
+  // --- First-run setup ----------------------------------------------------------
+  // Open while a server install has no password yet; afterwards only to signed-in users
+  // who still need a TorBox key.
+  const setupOpen = (ctx: Context) => auth.locked || (auth.isAuthenticated(ctx) && !settings.value.torboxApiKey);
+
+  router.get('/api/setup/defaults', (ctx) => {
+    if (!setupOpen(ctx)) throw new HttpError(403, 'Setup is already done.');
+    ctx.json(200, { moviesDir: settings.value.moviesDir, tvDir: settings.value.tvDir, needsPassword: auth.locked });
+  });
+
+  router.post('/api/setup/torbox-test', async (ctx) => {
+    if (!setupOpen(ctx)) throw new HttpError(403, 'Setup is already done.');
+    const body = await ctx.body();
+    if (typeof body.apiKey !== 'string' || !body.apiKey.trim()) throw new HttpError(400, 'Enter your TorBox API key.');
+    ctx.json(200, await torbox.account(body.apiKey.trim()));
+  });
+
+  router.post('/api/setup', async (ctx) => {
+    if (!setupOpen(ctx)) throw new HttpError(403, 'Setup is already done.');
+    const body = await ctx.body() as SetupRequest;
+    if (auth.locked && !validPassword(body.password)) throw new HttpError(400, 'Choose a password of at least 8 characters.');
+    const key = typeof body.torboxApiKey === 'string' ? body.torboxApiKey.trim() : '';
+    const account = await torbox.account(key);
+    if (!account.ok) throw new HttpError(400, account.error ?? 'TorBox did not accept that key.');
+    settings.update({ torboxApiKey: key, moviesDir: body.moviesDir, tvDir: body.tvDir });
+    if (auth.locked) {
+      settings.setPassword(body.password!);
+      auth.startSession(ctx);
+    }
+    ctx.json(200, { ok: true, account });
   });
 
   // --- Settings ---------------------------------------------------------------
@@ -108,10 +149,30 @@ export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx
 
   router.put('/api/settings', async (ctx) => {
     const patch = await ctx.body() as SettingsPatch;
-    const hadPassword = Boolean(settings.value.passwordHash);
-    const updated = settings.update(patch);
-    if (!hadPassword && settings.value.passwordHash) setSession(ctx);
-    ctx.json(200, updated);
+    ctx.json(200, settings.update(patch));
+  });
+
+  router.post('/api/password', async (ctx) => {
+    const body = await ctx.body() as { current?: string; next?: string | null };
+    const ip = clientIp(ctx);
+    if (settings.value.passwordHash) {
+      if (auth.waitFor(ip) > 0) throw new HttpError(429, 'Too many attempts. Wait a moment.');
+      if (typeof body.current !== 'string' || !settings.checkPassword(body.current)) {
+        auth.recordFailure(ip);
+        throw new HttpError(401, 'Current password is wrong.');
+      }
+      auth.recordSuccess(ip);
+    }
+    if (body.next === null) {
+      if (!auth.canRemovePassword) throw new HttpError(400, 'A server install always needs a password.');
+      settings.setPassword(null);
+      return ctx.json(200, { ok: true });
+    }
+    if (!validPassword(body.next)) throw new HttpError(400, 'Use at least 8 characters.');
+    settings.setPassword(body.next);
+    // Other browsers are signed out by the change; keep this one signed in.
+    if (!options.desktop || ctx.cookies.haul_session?.startsWith('p.')) auth.startSession(ctx);
+    ctx.json(200, { ok: true });
   });
 
   router.post('/api/settings/torbox-test', async (ctx) => {
@@ -143,6 +204,45 @@ export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx
     ctx.json(200, { rows: rows.map((row) => ({ ...row, items: row.items.map((item) => ({ ...item, inLibrary: owned.has(item.id) })) })) });
   });
 
+  // Shows you own that have aired episodes after the newest one on disk.
+  let newEpisodesCache: { at: number; value: NewEpisodes[] } | null = null;
+  router.get('/api/new-episodes', async (ctx) => {
+    if (newEpisodesCache && Date.now() - newEpisodesCache.at < 10 * 60_000) return ctx.json(200, { shows: newEpisodesCache.value });
+    const ids = [...new Set(library.items.filter((item) => item.type === 'series' && item.imdbId).map((item) => item.imdbId!))].slice(0, 60);
+    const shows: NewEpisodes[] = [];
+    const queue = [...ids];
+    const worker = async () => {
+      for (let id = queue.shift(); id; id = queue.shift()) {
+        try {
+          const meta = await catalog.meta('series', id);
+          const owned = library.ownedEpisodes(id);
+          let last = { season: 0, episode: 0 };
+          for (const key of owned) {
+            const [season, episode] = key.split(':').map(Number) as [number, number];
+            if (season > 0 && (season > last.season || (season === last.season && episode > last.episode))) last = { season, episode };
+          }
+          if (!last.season) continue;
+          const fresh = meta.episodes.filter((episode) => episode.season > 0 && aired(episode.released)
+            && !owned.has(`${episode.season}:${episode.episode}`)
+            && (episode.season > last.season || (episode.season === last.season && episode.episode > last.episode)));
+          if (!fresh.length) continue;
+          // Offer the first season that has new episodes; later seasons appear once that one is in.
+          const season = fresh[0]!.season;
+          const inSeason = fresh.filter((episode) => episode.season === season);
+          shows.push({
+            imdbId: id, name: meta.name, poster: meta.poster, background: meta.background, season,
+            episodes: inSeason.map((episode) => ({ episode: episode.episode, title: episode.title, released: episode.released })),
+            latest: inSeason[inSeason.length - 1]!.released ?? ''
+          });
+        } catch { /* skip titles the catalog can't describe */ }
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    shows.sort((a, b) => b.latest.localeCompare(a.latest));
+    newEpisodesCache = { at: Date.now(), value: shows };
+    ctx.json(200, { shows });
+  });
+
   router.get('/api/catalog/:type/:id', async (ctx) => {
     const type = asType(ctx.params.type);
     const id = ctx.params.id as 'top' | 'year' | 'imdbRating';
@@ -164,7 +264,7 @@ export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx
 
   router.get('/api/meta/:type/:id', async (ctx) => {
     const meta = await catalog.meta(asType(ctx.params.type), asImdb(ctx.params.id));
-    ctx.json(200, withOwnership(meta));
+    ctx.json(200, { ...withOwnership(meta), follow: follows.find(meta.type, meta.id) ?? null });
   });
 
   // --- Releases ---------------------------------------------------------------
@@ -244,6 +344,36 @@ export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx
     ctx.json(200, { ok: true });
   });
 
+  // --- Follows, schedule, notifications --------------------------------------------
+  router.get('/api/follows', (ctx) => ctx.json(200, { follows: follows.follows }));
+
+  router.post('/api/follows', async (ctx) => {
+    const body = await ctx.body();
+    const meta = await catalog.meta(asType(body.type), asImdb(body.imdbId));
+    ctx.json(200, { follow: follows.follow(meta, body.autoDownload === true), notificationsReady: notifier.configured });
+  });
+
+  router.post('/api/follows/:id', async (ctx) => {
+    const body = await ctx.body();
+    const follow = follows.update(ctx.params.id!, { autoDownload: body.autoDownload });
+    if (!follow) throw new HttpError(404, 'Not following that');
+    ctx.json(200, { follow });
+  });
+
+  router.delete('/api/follows/:id', (ctx) => {
+    follows.unfollow(ctx.params.id!);
+    ctx.json(200, { ok: true });
+  });
+
+  router.get('/api/schedule', async (ctx) => {
+    ctx.json(200, { items: await follows.schedule(jobs.jobs) });
+  });
+
+  router.post('/api/notifications/test', async (ctx) => {
+    const result = await notifier.send({ title: 'Haul is connected', message: 'Notifications from Haul will look like this.', path: '/upcoming', priority: 3, tags: ['white_check_mark'] });
+    ctx.json(result.ok ? 200 : 400, result.ok ? { ok: true } : { error: result.error });
+  });
+
   // --- Library ----------------------------------------------------------------
   router.get('/api/library', (ctx) => ctx.json(200, { items: library.summaries(), scanning: library.isScanning, scannedAt: library.scannedAt }));
 
@@ -276,5 +406,4 @@ export function registerApi(router: Router, deps: Deps): { isAuthenticated: (ctx
     ctx.json(200, { enabled: settings.value.addon.enabled, ...addonUrls(settings, ctx.baseUrl), baseUrlSource: settings.value.addon.publicUrl ? 'setting' : 'request' });
   });
 
-  return { isAuthenticated };
 }

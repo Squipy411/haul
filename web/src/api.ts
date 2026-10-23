@@ -1,5 +1,5 @@
 import type {
-  AddonInfo, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, Release, SeasonPlan, Settings, SettingsPatch, Status, TorboxAccount
+  AddonInfo, Follow, HomeRow, ScheduleItem, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, Release, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount
 } from '../../shared/types';
 
 export class ApiError extends Error {
@@ -11,7 +11,7 @@ export class ApiError extends Error {
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: { 'X-Haul-Request': '1', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'same-origin'
   });
@@ -31,7 +31,11 @@ export const api = {
 
   settings: () => request<Settings>('GET', '/api/settings'),
   saveSettings: (patch: SettingsPatch) => request<Settings>('PUT', '/api/settings', patch),
+  changePassword: (current: string, next: string | null) => request<{ ok: true }>('POST', '/api/password', { current, next }),
   testTorbox: (apiKey?: string) => request<TorboxAccount>('POST', '/api/settings/torbox-test', { apiKey }),
+  setupDefaults: () => request<{ moviesDir: string; tvDir: string; needsPassword: boolean }>('GET', '/api/setup/defaults'),
+  setupTestTorbox: (apiKey: string) => request<TorboxAccount>('POST', '/api/setup/torbox-test', { apiKey }),
+  setup: (body: SetupRequest) => request<{ ok: true; account: TorboxAccount }>('POST', '/api/setup', body),
   checkFolders: () => request<{ results: Array<{ dir: string; ok: boolean; error?: string }> }>('POST', '/api/settings/check-folders'),
 
   home: () => request<{ rows: HomeRow[] }>('GET', '/api/home'),
@@ -41,6 +45,7 @@ export const api = {
     if (options.skip) query.set('skip', String(options.skip));
     return request<{ items: MetaPreview[] }>('GET', `/api/catalog/${type}/${id}?${query}`);
   },
+  newEpisodes: () => request<{ shows: NewEpisodes[] }>('GET', '/api/new-episodes'),
   search: (q: string) => request<{ movies: MetaPreview[]; series: MetaPreview[] }>('GET', `/api/search?q=${encodeURIComponent(q)}`),
   meta: (type: MediaType, id: string) => request<Meta>('GET', `/api/meta/${type}/${id}`),
 
@@ -61,6 +66,13 @@ export const api = {
   libraryItem: (id: string) => request<LibraryItem>('GET', `/api/library/${id}`),
   scanLibrary: () => request<{ ok: true }>('POST', '/api/library/scan'),
   matchLibraryItem: (id: string, imdbId: string | null) => request<LibraryItem>('POST', `/api/library/${id}/match`, { imdbId }),
+
+  follows: () => request<{ follows: Follow[] }>('GET', '/api/follows'),
+  follow: (type: MediaType, imdbId: string, autoDownload: boolean) => request<{ follow: Follow; notificationsReady: boolean }>('POST', '/api/follows', { type, imdbId, autoDownload }),
+  updateFollow: (id: string, autoDownload: boolean) => request<{ follow: Follow }>('POST', `/api/follows/${id}`, { autoDownload }),
+  unfollow: (id: string) => request<{ ok: true }>('DELETE', `/api/follows/${id}`),
+  schedule: () => request<{ items: ScheduleItem[] }>('GET', '/api/schedule'),
+  testNotification: () => request<{ ok: true }>('POST', '/api/notifications/test'),
 
   addon: () => request<AddonInfo>('GET', '/api/addon'),
   regenerateAddon: () => request<AddonInfo>('POST', '/api/addon/regenerate')

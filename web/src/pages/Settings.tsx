@@ -1,43 +1,126 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import type { AddonInfo, Settings, SettingsPatch, TorboxAccount } from '../../../shared/types';
+import { encode } from 'uqr';
+import type { AddonInfo, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
-import { ErrorNote, Loading, Seg, Toggle } from '../components/ui';
+import { ErrorNote, Loading, Picker, Toggle } from '../components/ui';
 import { copyText, useAsync, useToast } from '../lib';
 
-function Section({ id, title, description, children }: { id: string; title: string; description?: string; children: ReactNode }) {
+function Section({ title, description, children }: { title: string; description: ReactNode; children: ReactNode }) {
   return (
-    <section id={id} className="settings-section">
-      <header><h2>{title}</h2>{description && <p>{description}</p>}</header>
-      <div>{children}</div>
+    <section className="settings-row">
+      <header><h2>{title}</h2><p>{description}</p></header>
+      <div className="panel">{children}</div>
     </section>
   );
 }
 
-function Setting({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+function Field({ id, label, hint, children }: { id: string; label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <div className="setting">
-      <div><b>{title}</b>{description && <small>{description}</small>}</div>
-      <div style={{ flex: 'none' }}>{children}</div>
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      {children}
+      {hint && <span className="hint">{hint}</span>}
     </div>
   );
 }
 
-function ListEditor({ values, onChange, placeholder }: { values: string[]; onChange: (values: string[]) => void; placeholder: string }) {
+function SwitchRow({ title, description, checked, onChange }: { title: string; description?: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <div className="switch-row">
+      <b>{title}</b>
+      <Toggle checked={checked} onChange={onChange} label={title} />
+      {description && <small>{description}</small>}
+    </div>
+  );
+}
+
+function ListEditor({ id, values, onChange, placeholder }: { id: string; values: string[]; onChange: (values: string[]) => void; placeholder: string }) {
   const [draft, setDraft] = useState('');
   const add = () => { if (draft.trim()) { onChange([...values, draft.trim()]); setDraft(''); } };
   return (
-    <div className="list-edit">
+    <div className="stack" style={{ gap: 8 }}>
       {values.map((value, index) => (
-        <div key={`${index}-${value}`} className="item">
-          <input className="input mono" value={value} onChange={(event) => onChange(values.map((item, position) => (position === index ? event.target.value : item)))} />
-          <button className="btn danger" onClick={() => onChange(values.filter((_, position) => position !== index))}>Remove</button>
+        <div key={`${index}-${value}`} className="row" style={{ gap: 8 }}>
+          <input className="input code" value={value} aria-label={`Entry ${index + 1}`} onChange={(event) => onChange(values.map((item, position) => (position === index ? event.target.value : item)))} />
+          <button className="btn sm danger" onClick={() => onChange(values.filter((_, position) => position !== index))}>Remove</button>
         </div>
       ))}
-      <div className="item">
-        <input className="input mono" placeholder={placeholder} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add(); } }} />
-        <button className="btn" onClick={add} disabled={!draft.trim()}>Add</button>
+      <div className="row" style={{ gap: 8 }}>
+        <input id={id} className="input code" placeholder={placeholder} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add(); } }} />
+        <button className="btn sm" onClick={add} disabled={!draft.trim()}>Add</button>
       </div>
     </div>
+  );
+}
+
+/** A QR code for the phone to scan, drawn as one SVG path. */
+function QrCode({ text, size = 132 }: { text: string; size?: number }) {
+  const path = useMemo(() => {
+    const { data } = encode(text, { border: 2 });
+    let d = '';
+    data.forEach((row, y) => row.forEach((on, x) => { if (on) d += `M${x} ${y}h1v1h-1z`; }));
+    return { d, size: data.length };
+  }, [text]);
+  return (
+    <svg className="qr" width={size} height={size} viewBox={`0 0 ${path.size} ${path.size}`} role="img" aria-label="QR code for the notification topic" shapeRendering="crispEdges">
+      <rect width={path.size} height={path.size} fill="#fff" />
+      <path d={path.d} fill="#000" />
+    </svg>
+  );
+}
+
+const newTopic = () => `haul-${Array.from(crypto.getRandomValues(new Uint8Array(9)), (byte) => byte.toString(36).padStart(2, '0')).join('').slice(0, 16)}`; // taste-skill-ignore: random bytes, not labels
+const DISCORD = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//;
+
+function PasswordSection({ passwordSet }: { passwordSet: boolean }) {
+  const toast = useToast();
+  const [status, setStatus] = useState<Status | null>(null);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.status().then(setStatus, () => undefined); }, [passwordSet]);
+
+  const run = async (action: () => Promise<unknown>, done: string) => {
+    setBusy(true);
+    try {
+      await action();
+      setCurrent('');
+      setNext('');
+      toast(done);
+      window.dispatchEvent(new Event('haul:settings-changed'));
+    } catch (failure) {
+      toast((failure as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Password"
+      description={status?.desktop
+        ? 'The app signs its own window in. Set a password to open Haul from a phone or another computer.'
+        : 'Anyone who opens Haul needs it. Changing it signs out every other device; the Nuvio addon keeps working.'}
+    >
+      <div className="two">
+        {passwordSet && (
+          <Field id="pw-current" label="Current password">
+            <input id="pw-current" className="input" type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
+          </Field>
+        )}
+        <Field id="pw-next" label={passwordSet ? 'New password' : 'Password'} hint="At least 8 characters">
+          <input id="pw-next" className="input" type="password" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
+        </Field>
+      </div>
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button className="btn" disabled={busy || next.length < 8 || (passwordSet && !current)} onClick={() => run(() => api.changePassword(current, next), passwordSet ? 'Password changed' : 'Password set')}>
+          {passwordSet ? 'Change password' : 'Set password'}
+        </button>
+        {passwordSet && status?.canRemovePassword && <button className="btn danger" disabled={busy || !current} onClick={() => run(() => api.changePassword(current, null), 'Password removed')}>Remove password</button>}
+        <span className="grow" />
+        {passwordSet && !status?.desktop && <button className="btn ghost" onClick={async () => { await api.logout(); window.location.assign('/'); }}>Sign out</button>}
+      </div>
+    </Section>
   );
 }
 
@@ -48,10 +131,10 @@ export function SettingsPage() {
   const { data, error, reload, setData } = useAsync(() => api.settings(), []);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [apiKey, setApiKey] = useState('');
-  const [password, setPassword] = useState('');
   const [account, setAccount] = useState<TorboxAccount | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [notifying, setNotifying] = useState(false);
   const [folders, setFolders] = useState<Array<{ dir: string; ok: boolean; error?: string }> | null>(null);
   const [addon, setAddon] = useState<AddonInfo | null>(null);
 
@@ -60,198 +143,211 @@ export function SettingsPage() {
     api.testTorbox().then(setAccount, () => undefined);
     api.addon().then(setAddon, () => undefined);
   }, []);
+  useEffect(() => {
+    const refresh = () => { api.settings().then(setData, () => undefined); };
+    window.addEventListener('haul:settings-changed', refresh);
+    return () => window.removeEventListener('haul:settings-changed', refresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const dirty = useMemo(() => Boolean(data && draft && (JSON.stringify(data) !== JSON.stringify(draft) || apiKey || password)), [data, draft, apiKey, password]);
-  if (error) return <div className="page"><ErrorNote message={error} onRetry={reload} /></div>;
+  const dirty = useMemo(() => Boolean(data && draft && (JSON.stringify(data) !== JSON.stringify(draft) || apiKey)), [data, draft, apiKey]);
+  if (error) return <div className="canvas"><ErrorNote message={error} onRetry={reload} /></div>;
   if (!draft) return <Loading />;
   const set = (patch: (value: Settings) => Settings) => setDraft((value) => (value ? patch(value) : value));
+  const setNotify = (patch: Partial<Settings['notifications']>) => set((value) => ({ ...value, notifications: { ...value.notifications, ...patch } }));
+  const topicUrl = `${draft.notifications.ntfyServer.replace(/\/+$/, '')}/${draft.notifications.ntfyTopic}`;
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     setSaving(true);
     try {
       const { passwordSet: _passwordSet, torboxApiKey: _masked, ...rest } = draft;
       const patch: SettingsPatch = { ...rest };
       if (apiKey.trim()) patch.torboxApiKey = apiKey.trim();
-      if (password) patch.password = password;
-      const saved = await api.saveSettings(patch);
-      setData(saved);
+      setData(await api.saveSettings(patch));
       setApiKey('');
-      setPassword('');
       if (patch.torboxApiKey) setAccount(await api.testTorbox());
       setAddon(await api.addon());
       window.dispatchEvent(new Event('haul:refresh-status'));
-      toast('Saved');
+      toast('Settings saved');
+      return true;
     } catch (failure) {
       toast((failure as Error).message, 'error');
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  const test = async () => {
+  const sendTest = async () => {
+    setNotifying(true);
+    try {
+      if (dirty && !(await save())) return;
+      await api.testNotification();
+      toast('Test sent. It should be on your phone now.');
+    } catch (failure) {
+      toast((failure as Error).message, 'error');
+    } finally {
+      setNotifying(false);
+    }
+  };
+
+  const check = async () => {
     setTesting(true);
     setAccount(await api.testTorbox(apiKey.trim() || undefined).catch((failure: Error) => ({ ok: false, error: failure.message })));
     setTesting(false);
   };
 
   return (
-    <div className="page">
-      <div className="page-head"><div><h1 className="page-title">Settings</h1></div></div>
-
-      <Section id="torbox" title="TorBox" description="Torrents are fetched by TorBox. This server downloads the finished files over HTTPS and never joins a swarm.">
-        <div className="form-grid">
-          <label className="field">
-            <span>API key</span>
-            <input className="input mono" type="password" autoComplete="off" placeholder={draft.torboxApiKey || 'Paste your key'} value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
-            <span className="hint">torbox.app → Settings → API key. Stored on this server only.</span>
-          </label>
-          <div className="field" style={{ display: 'grid', gap: 6, alignContent: 'start' }}>
-            <span className="field-label">Account</span>
-            <div className="row" style={{ minHeight: 36 }}>
-              {account?.ok && <span className="mono" style={{ fontSize: 12.5 }}><span className="sq ok" style={{ marginRight: 8 }} />{account.plan}{account.expires ? ` · until ${new Date(account.expires).toLocaleDateString()}` : ''}</span>}
-              {account && !account.ok && <span className="bad" style={{ fontSize: 13 }}>{account.error}</span>}
-              <button className="btn sm" onClick={test} disabled={testing}>{testing && <span className="spinner" />}Test</button>
-            </div>
+    <div className="canvas">
+      <div className="title-row"><h1>Settings</h1></div>
+      <div className="settings">
+        <Section title="TorBox" description="TorBox downloads the torrents on its own servers. Haul then fetches the finished files over HTTPS, so this machine never joins a swarm.">
+          <div className="switch-row">
+            <b>{account?.ok ? `${account.plan} plan` : account ? 'Not connected' : 'Checking…'}</b>
+            <button className="btn sm" onClick={check} disabled={testing}>{testing && <span className="spinner" />}Check</button>
+            <small>{account?.ok ? (account.expires ? `Renews ${new Date(account.expires).toLocaleDateString()}` : 'Connected') : account?.error ?? ''}</small>
           </div>
-        </div>
-      </Section>
+          <div className="divider" />
+          <Field id="torbox-key" label="API key" hint={`The saved key ends in ${draft.torboxApiKey.slice(-4) || '…'}. Paste a new one from torbox.app/settings to replace it.`}>
+            <input id="torbox-key" className="input code" type="password" autoComplete="off" placeholder="New API key" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+          </Field>
+        </Section>
 
-      <Section id="folders" title="Folders" description="Paths as the server sees them. In the Docker install, /media is /DATA/Media on the ThinkStation.">
-        <div className="form-grid">
-          <label className="field"><span>Films</span><input className="input mono" value={draft.moviesDir} onChange={(event) => set((value) => ({ ...value, moviesDir: event.target.value }))} /></label>
-          <label className="field"><span>Series</span><input className="input mono" value={draft.tvDir} onChange={(event) => set((value) => ({ ...value, tvDir: event.target.value }))} /></label>
-          <label className="field">
-            <span>Downloads in progress</span>
-            <input className="input mono" value={draft.incompleteDir} onChange={(event) => set((value) => ({ ...value, incompleteDir: event.target.value }))} />
-            <span className="hint">Same disk as the library, so finished files move instantly.</span>
-          </label>
-          <div className="field" style={{ display: 'grid', gap: 6 }}>
-            <span className="field-label">Extra folders to host (read only)</span>
-            <ListEditor values={draft.extraLibraryDirs} onChange={(extraLibraryDirs) => set((value) => ({ ...value, extraLibraryDirs }))} placeholder="/media/Anime" />
+        <Section title="Folders" description="Where films and episodes are saved. In Docker these paths are inside the container, usually under /media.">
+          <div className="two">
+            <Field id="dir-movies" label="Movies"><input id="dir-movies" className="input code" value={draft.moviesDir} onChange={(event) => set((value) => ({ ...value, moviesDir: event.target.value }))} /></Field>
+            <Field id="dir-tv" label="Shows"><input id="dir-tv" className="input code" value={draft.tvDir} onChange={(event) => set((value) => ({ ...value, tvDir: event.target.value }))} /></Field>
           </div>
-        </div>
-        <div className="row wrap" style={{ marginTop: 16 }}>
-          <button className="btn sm" onClick={async () => setFolders((await api.checkFolders()).results)}>Check write access</button>
-          {folders?.map((folder) => (
-            <span key={folder.dir} className={`tag ${folder.ok ? 'ok' : 'bad'}`} title={folder.error}>{folder.ok ? 'OK' : 'NO ACCESS'} {folder.dir}</span>
-          ))}
-        </div>
-        <div style={{ marginTop: 18 }}>
-          <Setting title="Rescan every" description="Picks up files added by hand. 0 turns it off.">
-            <div className="row"><input className="input mono" type="number" min={0} style={{ width: 80 }} value={draft.library.rescanMinutes} onChange={(event) => set((value) => ({ ...value, library: { rescanMinutes: number(event.target.value) } }))} /><span className="muted mono" style={{ fontSize: 12 }}>min</span></div>
-          </Setting>
-        </div>
-      </Section>
-
-      <Section id="quality" title="Quality" description="Ranks releases, and decides what “Download season” picks on its own.">
-        <Setting title="Preferred resolution">
-          <Seg value={draft.quality.preferred} onChange={(preferred) => set((value) => ({ ...value, quality: { ...value.quality, preferred } }))}
-            options={[{ value: '2160p', label: '2160P' }, { value: '1080p', label: '1080P' }, { value: '720p', label: '720P' }, { value: 'any', label: 'HIGHEST' }]} />
-        </Setting>
-        <Setting title="Prefer cached releases" description="Releases TorBox already has start immediately.">
-          <Toggle checked={draft.quality.preferCached} onChange={(preferCached) => set((value) => ({ ...value, quality: { ...value.quality, preferCached } }))} />
-        </Setting>
-        <Setting title="Allow HDR and Dolby Vision" description="Turn off if your TV shows washed-out colour.">
-          <Toggle checked={draft.quality.allowHdr} onChange={(allowHdr) => set((value) => ({ ...value, quality: { ...value.quality, allowHdr } }))} />
-        </Setting>
-        <Setting title="Allow AI-upscaled releases">
-          <Toggle checked={draft.quality.allowUpscaled} onChange={(allowUpscaled) => set((value) => ({ ...value, quality: { ...value.quality, allowUpscaled } }))} />
-        </Setting>
-        <Setting title="Size limit" description="GB per episode and per film. 0 means no limit.">
-          <div className="row">
-            <input className="input mono" type="number" min={0} style={{ width: 70 }} title="Per episode" value={draft.quality.maxEpisodeGB} onChange={(event) => set((value) => ({ ...value, quality: { ...value.quality, maxEpisodeGB: number(event.target.value) } }))} />
-            <input className="input mono" type="number" min={0} style={{ width: 70 }} title="Per film" value={draft.quality.maxMovieGB} onChange={(event) => set((value) => ({ ...value, quality: { ...value.quality, maxMovieGB: number(event.target.value) } }))} />
+          <Field id="dir-incomplete" label="Downloads in progress" hint="Keep it on the same drive as your library so finished files move instantly.">
+            <input id="dir-incomplete" className="input code" value={draft.incompleteDir} onChange={(event) => set((value) => ({ ...value, incompleteDir: event.target.value }))} />
+          </Field>
+          <Field id="dir-extra" label="Other folders to include" hint="They appear in your library and the Nuvio addon. Haul never writes to them.">
+            <ListEditor id="dir-extra" values={draft.extraLibraryDirs} onChange={(extraLibraryDirs) => set((value) => ({ ...value, extraLibraryDirs }))} placeholder="/media/Anime" />
+          </Field>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <button className="btn sm" onClick={async () => setFolders((await api.checkFolders()).results)}>Test write access</button>
+            {folders && (folders.every((folder) => folder.ok)
+              ? <span className="pill positive">All folders are writable</span>
+              : <span className="pill negative">Can't write to {folders.filter((folder) => !folder.ok).map((folder) => folder.dir).join(', ')}</span>)}
+            <span className="grow" />
+            <label htmlFor="rescan" className="muted">Check for new files every</label>
+            <input id="rescan" className="input num" type="number" min={0} style={{ width: 72, height: 32 }} value={draft.library.rescanMinutes} onChange={(event) => set((value) => ({ ...value, library: { rescanMinutes: number(event.target.value) } }))} />
+            <span className="muted">min</span>
           </div>
-        </Setting>
-        <label className="field" style={{ marginTop: 12 }}>
-          <span>Hide releases containing</span>
-          <input className="input" placeholder="HDCAM, Telesync, KORSUB" value={draft.quality.blockedWords.join(', ')} onChange={(event) => set((value) => ({ ...value, quality: { ...value.quality, blockedWords: event.target.value.split(',').map((word) => word.trim()).filter(Boolean) } }))} />
-        </label>
-      </Section>
+        </Section>
 
-      <Section id="sources" title="Sources" description="Where torrents come from. Results are merged and checked against the TorBox cache in one call.">
-        <Setting title="Torrentio" description="Public trackers. No account needed.">
-          <Toggle checked={draft.sources.torrentio} onChange={(torrentio) => set((value) => ({ ...value, sources: { ...value.sources, torrentio } }))} />
-        </Setting>
-        {draft.sources.torrentio && (
-          <label className="field" style={{ margin: '4px 0 14px' }}>
-            <span>Torrentio address</span>
-            <input className="input mono" value={draft.sources.torrentioUrl} onChange={(event) => set((value) => ({ ...value, sources: { ...value.sources, torrentioUrl: event.target.value } }))} />
-            <span className="hint">Paste a configured Torrentio URL to choose providers. Leave debrid options out.</span>
-          </label>
-        )}
-        <Setting title="TorBox search" description="TorBox’s own index, using your key.">
-          <Toggle checked={draft.sources.torboxSearch} onChange={(torboxSearch) => set((value) => ({ ...value, sources: { ...value.sources, torboxSearch } }))} />
-        </Setting>
-        <div className="field" style={{ display: 'grid', gap: 6, marginTop: 12 }}>
-          <span className="field-label">Other torrent addons (manifest URLs)</span>
-          <ListEditor values={draft.sources.addons} onChange={(addons) => set((value) => ({ ...value, sources: { ...value.sources, addons } }))} placeholder="https://…/manifest.json" />
-          <span className="hint">Any Stremio addon that returns torrents, such as Comet or MediaFusion without debrid.</span>
-        </div>
-      </Section>
-
-      <Section id="downloads" title="Downloads" description="Files are named for Plex, Jellyfin and Nuvio, e.g. Show (2008)/Season 01/Show (2008) - S01E04 - Title - 1080p.mkv">
-        <Setting title="Parallel files" description="Files downloading from TorBox at the same time.">
-          <input className="input mono" type="number" min={1} max={10} style={{ width: 70 }} value={draft.downloads.concurrentFiles} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, concurrentFiles: number(event.target.value) } }))} />
-        </Setting>
-        <Setting title="English subtitles" description="Save matching .srt files next to the video.">
-          <Toggle checked={draft.downloads.subtitles} onChange={(subtitles) => set((value) => ({ ...value, downloads: { ...value.downloads, subtitles } }))} />
-        </Setting>
-        <Setting title="Episode titles in file names">
-          <Toggle checked={draft.downloads.episodeTitles} onChange={(episodeTitles) => set((value) => ({ ...value, downloads: { ...value.downloads, episodeTitles } }))} />
-        </Setting>
-        <Setting title="Resolution in file names" description="Lets two versions of the same episode sit side by side.">
-          <Toggle checked={draft.downloads.qualityInName} onChange={(qualityInName) => set((value) => ({ ...value, downloads: { ...value.downloads, qualityInName } }))} />
-        </Setting>
-        <Setting title="Remove from TorBox when done" description="Keeps your TorBox list short. Shared torrents stay until the last download using them finishes.">
-          <Toggle checked={draft.downloads.removeFromTorbox} onChange={(removeFromTorbox) => set((value) => ({ ...value, downloads: { ...value.downloads, removeFromTorbox } }))} />
-        </Setting>
-      </Section>
-
-      <Section id="addon" title="Nuvio addon" description="Your library as a Stremio-compatible addon. This replaces Personal Media Addon and Nuvi-Flow.">
-        <Setting title="Serve the addon">
-          <Toggle checked={draft.addon.enabled} onChange={(enabled) => set((value) => ({ ...value, addon: { ...value.addon, enabled } }))} />
-        </Setting>
-        <div className="form-grid" style={{ marginTop: 8 }}>
-          <label className="field"><span>Name in Nuvio</span><input className="input" value={draft.addon.name} onChange={(event) => set((value) => ({ ...value, addon: { ...value.addon, name: event.target.value } }))} /></label>
-          <label className="field">
-            <span>Public address</span>
-            <input className="input mono" placeholder="http://10.0.0.241:60700" value={draft.addon.publicUrl} onChange={(event) => set((value) => ({ ...value, addon: { ...value.addon, publicUrl: event.target.value } }))} />
-            <span className="hint">Only needed if Nuvio reaches this server at a different address, e.g. Tailscale or a domain.</span>
-          </label>
-        </div>
-        {addon && (
-          <div style={{ marginTop: 16 }}>
-            <span className="field-label">Manifest URL</span>
-            <div className="row" style={{ marginTop: 6 }}>
-              <code className="url grow" title={addon.manifestUrl}>{addon.manifestUrl}</code>
-              <button className="btn sm" onClick={async () => toast(await copyText(addon.manifestUrl) ? 'Copied' : 'Copy failed')}>Copy</button>
-              <button className="btn sm quiet" onClick={async () => { if (window.confirm('Make a new addon URL? The old one stops working and Nuvio needs the new one.')) { setAddon(await api.regenerateAddon()); toast('New addon URL made'); } }}>New URL</button>
-            </div>
+        <Section title="Quality" description="How versions are ranked, and what “Download season” picks on its own.">
+          <div className="switch-row">
+            <b>Preferred resolution</b>
+            <Picker label="Preferred resolution" value={draft.quality.preferred} onChange={(preferred) => set((value) => ({ ...value, quality: { ...value.quality, preferred } }))}
+              options={[{ value: '2160p', label: '4K' }, { value: '1080p', label: '1080p' }, { value: '720p', label: '720p' }, { value: 'any', label: 'Highest available' }]} />
           </div>
-        )}
-      </Section>
+          <div className="divider" />
+          <SwitchRow title="Prefer versions that are ready now" description="TorBox already has them, so they start right away." checked={draft.quality.preferCached} onChange={(preferCached) => set((value) => ({ ...value, quality: { ...value.quality, preferCached } }))} />
+          <SwitchRow title="Prefer bigger files" description="Among equal versions, the larger file wins. Bigger usually means a better encode." checked={draft.quality.preferLarger} onChange={(preferLarger) => set((value) => ({ ...value, quality: { ...value.quality, preferLarger } }))} />
+          <SwitchRow title="Allow HDR and Dolby Vision" description="Turn off if colours look washed out on your TV." checked={draft.quality.allowHdr} onChange={(allowHdr) => set((value) => ({ ...value, quality: { ...value.quality, allowHdr } }))} />
+          <SwitchRow title="Allow AI-upscaled versions" checked={draft.quality.allowUpscaled} onChange={(allowUpscaled) => set((value) => ({ ...value, quality: { ...value.quality, allowUpscaled } }))} />
+          <div className="divider" />
+          <div className="two">
+            <Field id="q-ep" label="Largest episode, GB" hint="0 means no limit"><input id="q-ep" className="input num" type="number" min={0} value={draft.quality.maxEpisodeGB} onChange={(event) => set((value) => ({ ...value, quality: { ...value.quality, maxEpisodeGB: number(event.target.value) } }))} /></Field>
+            <Field id="q-movie" label="Largest movie, GB" hint="0 means no limit"><input id="q-movie" className="input num" type="number" min={0} value={draft.quality.maxMovieGB} onChange={(event) => set((value) => ({ ...value, quality: { ...value.quality, maxMovieGB: number(event.target.value) } }))} /></Field>
+          </div>
+          <Field id="q-blocked" label="Hide versions containing" hint="Separate words with commas, for example HDCAM, KORSUB">
+            <input id="q-blocked" className="input" value={draft.quality.blockedWords.join(', ')} onChange={(event) => set((value) => ({ ...value, quality: { ...value.quality, blockedWords: event.target.value.split(',').map((word) => word.trim()).filter(Boolean) } }))} />
+          </Field>
+        </Section>
 
-      <Section id="security" title="Password" description="Optional. Protects this dashboard; the Nuvio addon keeps working through its private URL.">
-        <div className="form-grid">
-          <label className="field">
-            <span>{draft.passwordSet ? 'New password' : 'Password'}</span>
-            <input className="input" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={draft.passwordSet ? '' : 'None set'} />
-          </label>
-          {draft.passwordSet && (
-            <div style={{ alignSelf: 'end' }}>
-              <button className="btn danger" onClick={async () => { if (window.confirm('Remove the dashboard password?')) { setData(await api.saveSettings({ password: '' })); toast('Password removed'); } }}>Remove password</button>
+        <Section title="Where to look" description="Torrents from every source are combined and checked against TorBox in one go.">
+          <SwitchRow title="Torrentio" description="Public trackers. No account needed." checked={draft.sources.torrentio} onChange={(torrentio) => set((value) => ({ ...value, sources: { ...value.sources, torrentio } }))} />
+          {draft.sources.torrentio && (
+            <Field id="s-torrentio-url" label="Torrentio address" hint="Paste a configured Torrentio link to choose providers. Leave out debrid options.">
+              <input id="s-torrentio-url" className="input code" value={draft.sources.torrentioUrl} onChange={(event) => set((value) => ({ ...value, sources: { ...value.sources, torrentioUrl: event.target.value } }))} />
+            </Field>
+          )}
+          <SwitchRow title="TorBox search" description="TorBox's own index, using your key." checked={draft.sources.torboxSearch} onChange={(torboxSearch) => set((value) => ({ ...value, sources: { ...value.sources, torboxSearch } }))} />
+          <Field id="s-addons" label="Other Stremio addons" hint="Any addon that lists torrents, such as Comet or MediaFusion without debrid. Paste its manifest address.">
+            <ListEditor id="s-addons" values={draft.sources.addons} onChange={(addons) => set((value) => ({ ...value, sources: { ...value.sources, addons } }))} placeholder="https://…/manifest.json" />
+          </Field>
+        </Section>
+
+        <Section title="Downloading" description={<>Files are named for Plex, Jellyfin and Nuvio, for example <span style={{ color: 'var(--text)' }}>Breaking Bad (2008) / Season 01 / Breaking Bad (2008) - S01E04 - Cancer Man - 1080p.mkv</span></>}>
+          <Field id="d-parallel" label="Files at once" hint="How many files download to this machine at the same time.">
+            <input id="d-parallel" className="input num" type="number" min={1} max={10} style={{ width: 90 }} value={draft.downloads.concurrentFiles} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, concurrentFiles: number(event.target.value) } }))} />
+          </Field>
+          <div className="divider" />
+          <SwitchRow title="English subtitles" description="Saves matching .srt files next to the video." checked={draft.downloads.subtitles} onChange={(subtitles) => set((value) => ({ ...value, downloads: { ...value.downloads, subtitles } }))} />
+          <SwitchRow title="Episode titles in file names" checked={draft.downloads.episodeTitles} onChange={(episodeTitles) => set((value) => ({ ...value, downloads: { ...value.downloads, episodeTitles } }))} />
+          <SwitchRow title="Resolution in file names" description="Lets two versions of an episode sit side by side." checked={draft.downloads.qualityInName} onChange={(qualityInName) => set((value) => ({ ...value, downloads: { ...value.downloads, qualityInName } }))} />
+          <SwitchRow title="Remove from TorBox when finished" description="Keeps your TorBox list tidy." checked={draft.downloads.removeFromTorbox} onChange={(removeFromTorbox) => set((value) => ({ ...value, downloads: { ...value.downloads, removeFromTorbox } }))} />
+        </Section>
+
+        <Section title="Notifications" description="Haul tells your phone the moment a torrent is out for something you follow, not when it airs. It checks every 5 minutes on the day an episode comes out.">
+          <SwitchRow title="Send notifications" description="Off until you turn it on. Alerts go to the ntfy topic below and to Discord, if you add a webhook." checked={draft.notifications.enabled} onChange={(enabled) => setNotify({ enabled })} />
+          <div className="divider" />
+          <div className="phone-setup">
+            <QrCode text={topicUrl} />
+            <ol>
+              <li>Install <b>ntfy</b> on your phone. It's free on the App Store and Google Play.</li>
+              <li>Tap <b>+</b> and subscribe to <code>{draft.notifications.ntfyTopic}</code>{draft.notifications.ntfyServer !== 'https://ntfy.sh' && <> on <code>{draft.notifications.ntfyServer}</code></>}, or scan the code with your camera.</li>
+              <li>Turn on notifications, then send a test.</li>
+            </ol>
+          </div>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <button className="btn sm primary" onClick={sendTest} disabled={notifying || !draft.notifications.enabled}>{notifying && <span className="spinner" />}Send a test notification</button>
+            <button className="btn sm" onClick={async () => toast(await copyText(draft.notifications.ntfyTopic) ? 'Topic copied' : 'Copy failed')}>Copy topic</button>
+            <button className="btn sm ghost" onClick={() => setNotify({ ntfyTopic: newTopic() })}>New topic</button>
+          </div>
+          <div className="divider" />
+          <div className="two">
+            <Field id="n-topic" label="Topic" hint="Anyone who knows the topic can read it, so keep it long and random.">
+              <input id="n-topic" className="input code" value={draft.notifications.ntfyTopic} onChange={(event) => setNotify({ ntfyTopic: event.target.value.replace(/[^a-zA-Z0-9_-]/g, '') })} />
+            </Field>
+            <Field id="n-server" label="ntfy server" hint="Keep ntfy.sh unless you run your own. On iPhone, your own server needs upstream-base-url set to deliver instantly.">
+              <input id="n-server" className="input code" value={draft.notifications.ntfyServer} onChange={(event) => setNotify({ ntfyServer: event.target.value })} />
+            </Field>
+          </div>
+          <div className="two">
+            <Field id="n-token" label="Access token" hint="Only for a server with sign-in. Leave empty for ntfy.sh.">
+              <input id="n-token" className="input code" type="password" autoComplete="off" value={draft.notifications.ntfyToken} onChange={(event) => setNotify({ ntfyToken: event.target.value })} />
+            </Field>
+            <Field id="n-discord" label="Discord webhook" hint={draft.notifications.discordWebhook && !DISCORD.test(draft.notifications.discordWebhook) ? <span style={{ color: 'var(--negative)' }}>This isn't a Discord webhook address.</span> : 'Optional. Sends the same alerts to a Discord channel.'}>
+              <input id="n-discord" className="input code" placeholder="https://discord.com/api/webhooks/…" value={draft.notifications.discordWebhook} onChange={(event) => setNotify({ discordWebhook: event.target.value })} />
+            </Field>
+          </div>
+          <div className="divider" />
+          <SwitchRow title="When a download finishes" checked={draft.notifications.downloadFinished} onChange={(downloadFinished) => setNotify({ downloadFinished })} />
+          <SwitchRow title="When a download fails" checked={draft.notifications.downloadFailed} onChange={(downloadFailed) => setNotify({ downloadFailed })} />
+        </Section>
+
+        <Section title="Nuvio and Stremio" description="Your library as an addon. Anyone with the address can play your files, so keep it private.">
+          <SwitchRow title="Share my library as an addon" checked={draft.addon.enabled} onChange={(enabled) => set((value) => ({ ...value, addon: { ...value.addon, enabled } }))} />
+          <div className="two">
+            <Field id="a-name" label="Name in Nuvio"><input id="a-name" className="input" value={draft.addon.name} onChange={(event) => set((value) => ({ ...value, addon: { ...value.addon, name: event.target.value } }))} /></Field>
+            <Field id="a-public" label="Address for streams" hint="Only if Nuvio reaches Haul at another address, such as Tailscale or a domain.">
+              <input id="a-public" className="input code" placeholder="http://192.168.1.20:60700" value={draft.addon.publicUrl} onChange={(event) => set((value) => ({ ...value, addon: { ...value.addon, publicUrl: event.target.value } }))} />
+            </Field>
+          </div>
+          {addon && (
+            <div className="field">
+              <span className="field-label">Addon address</span>
+              <div className="url" title={addon.manifestUrl}>{addon.manifestUrl}</div>
+              <div className="row">
+                <button className="btn sm" onClick={async () => toast(await copyText(addon.manifestUrl) ? 'Addon address copied' : 'Copy failed')}>Copy</button>
+                <button className="btn sm ghost" onClick={async () => { if (!window.confirm('Make a new addon address? The current one stops working, and Nuvio will need the new one.')) return; setAddon(await api.regenerateAddon()); toast('New address made. Add it to Nuvio again.'); }}>Make a new address</button>
+              </div>
             </div>
           )}
-        </div>
-      </Section>
+        </Section>
+
+        <PasswordSection passwordSet={draft.passwordSet} />
+      </div>
 
       {dirty && (
         <div className="savebar">
-          <span className="muted">Unsaved changes</span>
+          <span className="muted">You have unsaved changes</span>
           <div className="row">
-            <button className="btn quiet" onClick={() => { setDraft(data ?? null); setApiKey(''); setPassword(''); }}>Discard</button>
-            <button className="btn primary" onClick={save} disabled={saving}>{saving && <span className="spinner" />}Save</button>
+            <button className="btn ghost" onClick={() => { setDraft(data ?? null); setApiKey(''); }}>Discard</button>
+            <button className="btn primary" onClick={() => void save()} disabled={saving}>{saving && <span className="spinner" />}Save changes</button>
           </div>
         </div>
       )}

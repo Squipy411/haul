@@ -2,27 +2,31 @@
 
 <img src="web/public/icon.png" width="56" align="right" alt="" />
 
-A self-hosted downloader for films and series that runs everything through [TorBox](https://torbox.app). Pick a title, choose a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your server, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
+A self-hosted downloader for films and series that runs everything through [TorBox](https://torbox.app). Pick a title, choose a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your machine, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
 
-It replaces a Sonarr + Radarr + Seerr + rdt-client stack for people who just want to choose what to download. Nothing is torrented on your own machine: TorBox fetches the torrent, Haul pulls the finished files over HTTPS.
+It replaces a Sonarr + Radarr + Seerr + download-client stack for people who just want to choose what to download. Nothing is torrented on your own machine: TorBox fetches the torrent, Haul pulls the finished files over HTTPS.
 
-![Discover](docs/screenshots/discover.jpg)
+You need a TorBox account and either Docker or a Windows PC.
+
+![Home](docs/screenshots/discover.jpg)
 
 ## What you can do
 
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
 - **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
-- **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. From a multi-season pack, only the season you asked for is downloaded.
+- **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. Largest files are listed first (switch to best match or most seeders if you like). From a multi-season pack, only the season you asked for is downloaded.
 - **Pick single episodes**, or tick several and download just those.
 - **Films** get the same release table, best match first.
-- **Follow progress** through TorBox → server → library, with pause, retry and cancel.
-- **Host your library for Nuvio/Stremio**: catalogs for your series and films, and a "Haul" stream on any title you own, played straight from disk with seeking. This replaces Personal Media Addon / Nuvi-Flow.
+- **Follow a show or a film** and get a phone notification the moment a torrent for the next episode is out, not just when it airs. Optionally let Haul download it right away.
+- **See what's coming** on the Upcoming page: new episodes of everything you follow or own, from last week to six weeks ahead, with whether a torrent is out yet.
+- **Track progress** through TorBox → your machine → library, with pause, retry and cancel.
+- **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too.
 
 | Season packs | Series page |
 | --- | --- |
 | ![Season packs](docs/screenshots/packs.jpg) | ![Series](docs/screenshots/show.jpg) |
-| **Library and Nuvio addon** | **Downloads** |
-| ![Library](docs/screenshots/library.jpg) | ![Downloads](docs/screenshots/downloads.jpg) |
+| **Library and Nuvio addon** | **Upcoming** |
+| ![Library](docs/screenshots/library.jpg) | ![Upcoming](docs/screenshots/upcoming.jpg) |
 
 Files are saved like this, reusing show and season folders that already exist:
 
@@ -31,7 +35,48 @@ TV Shows/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E04 - Cancer Man
 Movies/Dune Part Two (2024)/Dune Part Two (2024) - 2160p.mkv
 ```
 
-## Install on ZimaOS
+## Install
+
+### Windows
+
+Download **Haul-Setup.exe** from [Releases](https://github.com/Squipy411/haul/releases/latest) and run it. Windows SmartScreen may warn that the app is unrecognised because it isn't code-signed; choose *More info → Run anyway*.
+
+<img src="docs/screenshots/windows-setup.jpg" width="420" align="right" alt="Windows app first run" />
+
+On first launch, choose:
+
+- **This PC**: Haul runs inside the app and downloads to your Videos folder. It is private to the PC unless you tick the box that lets Nuvio on your TV or phone reach it.
+- **A Haul server**: connect to Haul running in Docker elsewhere on your network.
+
+Change it later from the menu: *Haul → Change where Haul runs…*. There's also a portable `.exe` that needs no install.
+
+<br clear="right" />
+
+### Docker
+
+```bash
+docker run -d --name haul --restart unless-stopped -p 60700:60700 \
+  -e PUID=1000 -e PGID=1000 \
+  -v ./haul-data:/data -v /path/to/media:/media \
+  ghcr.io/squipy411/haul:latest
+```
+
+Or use [docker-compose.yml](docker-compose.yml). Then open `http://<server-ip>:60700`, create a password and paste your TorBox API key.
+
+- `/media` is your media folder; Haul writes to `Movies/` and `TV Shows/` inside it (changeable in Settings).
+- `PUID`/`PGID` make new files belong to your user (run `id` on the host to find them). Leave them out to run as root.
+- Images are built for amd64 and arm64.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `PUID`, `PGID` | – | Run as this user and group |
+| `TORBOX_API_KEY` | – | Pre-fill the key instead of entering it in setup |
+| `PUBLIC_URL` | – | Address Nuvio should use for streams, e.g. a domain behind a proxy |
+| `MOVIES_DIR`, `TV_DIR`, `INCOMPLETE_DIR` | under `/media` | Starting folder settings |
+| `HAUL_AUTH` | – | `none` turns off Haul's login. Only behind a proxy that does its own login. |
+| `HAUL_UPDATE_CHECK` | `true` | `false` stops the daily check for new releases |
+
+### ZimaOS / CasaOS
 
 In the ZimaOS terminal, as root (`sudo -i`):
 
@@ -39,41 +84,47 @@ In the ZimaOS terminal, as root (`sudo -i`):
 curl -fsSL https://raw.githubusercontent.com/Squipy411/haul/main/deploy/zimaos/install.sh | sh
 ```
 
-It builds the image on the server, registers Haul as a ZimaOS app (it appears on the dashboard) and starts it on port 60700. Run it again to update.
+It builds the image, adds Haul to the dashboard and starts it on port 60700, with media in `/DATA/Media`. Run the same command to update.
 
-| | |
-| --- | --- |
-| Dashboard | `http://<server>:60700` |
-| Settings, queue, library index | `/DATA/AppData/haul/data` |
-| Media | `/DATA/Media/Movies` and `/DATA/Media/TV Shows` (changeable in Settings) |
+### Updating
 
-On first open, paste your TorBox API key from torbox.app/settings.
+Haul shows **UPDATE x.y.z** in the top bar when a new release is out, and the Windows app offers the download.
 
-### Other Docker hosts
+- Docker: `docker pull ghcr.io/squipy411/haul:latest` and recreate the container (`docker compose pull && docker compose up -d`).
+- ZimaOS: run the install command again.
+- Windows: install the new `Haul-Setup.exe` over the old one.
 
-```bash
-docker run -d --name haul --restart unless-stopped -p 60700:60700 \
-  -v ./haul-data:/data -v /path/to/Media:/media ghcr.io/squipy411/haul:latest
-```
+Settings, the queue and the library index live in `/data` (Docker) or `%APPDATA%\Haul` (Windows) and survive updates.
 
-Or use [docker-compose.yml](docker-compose.yml). Optional environment: `TORBOX_API_KEY`, `PUID`/`PGID` (owner of new files), `PUBLIC_URL`, `MOVIES_DIR`, `TV_DIR`, `INCOMPLETE_DIR`.
+## Phone notifications
 
-## Windows app
+Haul sends notifications through [ntfy](https://ntfy.sh), a free push service with apps for iPhone and Android. You don't need an account.
 
-<img src="docs/screenshots/windows-setup.jpg" width="420" align="right" alt="Windows app setup" />
+1. Install ntfy on your phone.
+2. In Haul, open Settings → Notifications, turn on **Send notifications** and save.
+3. In the ntfy app tap **+** and subscribe to the topic Haul shows (or scan its QR code), then press **Send a test notification**.
 
-Get **Haul-Setup.exe** or **Haul-Portable.exe** from [Releases](https://github.com/Squipy411/haul/releases). On first launch, choose:
+Then open any show or film and choose **Follow**. Haul checks your sources every 5 minutes on the day an episode comes out, every 30 minutes for the rest of the week and every few hours after that, and notifies you the first time a usable torrent turns up (camera copies don't count). Tapping the notification opens the title in Haul.
 
-- **My Haul server**: a window onto the server on your ThinkStation.
-- **This PC**: Haul runs inside the app and downloads to your Videos folder.
+With **Download automatically** on, Haul starts the download as soon as a version in your preferred resolution appears. If only a lower resolution is out, it tells you and waits up to 12 hours for a better one before taking the best available.
 
-*Haul → Change server…* in the menu switches later.
+The topic is a long random name. On ntfy.sh anyone who knows it can read your notifications, so treat it like a password, or point Haul at your own ntfy server (with an access token if it needs sign-in). You can also add a Discord webhook. Notifications are off until you turn them on, so a fresh install never sends anything.
 
-<br clear="right" />
+## Nuvio and Stremio
 
-## Nuvio
+Library → **Copy URL**, then in Nuvio: Settings → Addons → install from URL (in Stremio, use *Open in Stremio*). The URL contains a private token; if it leaks, make a new one in Settings → Nuvio addon. If Nuvio reaches Haul through a different address than your browser does (Tailscale, a domain), set it under *Public address* so stream links use it.
 
-Library → **Copy URL**, then in Nuvio: Settings → Addons → install from URL. The URL contains a private token; if it leaks, make a new one in Settings → Nuvio addon. If Nuvio reaches the server through another address (Tailscale, a domain), set that as the public address so stream links use it.
+## Security
+
+- Server installs require a password, created during setup. Until then, only the setup page answers.
+- Sessions last 30 days and end on every device when the password changes. Repeated wrong passwords are slowed down.
+- Every change request carries a header that other websites cannot send, so a malicious page can't act through your signed-in browser.
+- The TorBox key stays on the server. The dashboard only ever sees its last four characters.
+- The Nuvio addon and its stream links use separate secrets: a private addon URL, and per-file links that are signed and expire after 48 hours.
+- The Windows app keeps "This PC" mode on `127.0.0.1` unless you choose to share it. Its window signs itself in; other devices need a password you set in Settings.
+- Haul serves plain HTTP. To use it from outside your home network, put it behind a VPN such as Tailscale or an HTTPS reverse proxy rather than forwarding the port.
+
+Found a problem? Open an issue, or for anything sensitive, contact the maintainer privately through GitHub.
 
 ## Sources
 
@@ -86,8 +137,8 @@ npm install
 npm run dev        # API on :60700, dashboard with hot reload on :5173
 npm test
 npm run build      # dist/server.mjs and dist/web
-npm run desktop    # Electron app from source
-npm run dist:win   # Windows installer (on Windows; use dist:win:mac on a Mac)
+npm run desktop    # Windows app from source
+npm run dist:win   # Windows installer (on Windows; dist:win:mac on a Mac)
 ```
 
 The server is one bundled file with no runtime dependencies (Node 22+). State lives in small JSON files in the data folder.
@@ -95,9 +146,11 @@ The server is one bundled file with no runtime dependencies (Node 22+). State li
 | Path | |
 | --- | --- |
 | `server/search.ts` | Gathers torrents, checks the TorBox cache, ranks releases, plans whole seasons |
-| `server/jobs.ts` | The queue: TorBox → server → library |
+| `server/jobs.ts` | The queue: TorBox → disk → library |
 | `server/organize.ts` | Picks the right files out of a torrent and names them |
 | `server/library.ts`, `server/addon.ts` | Library scanner and the Nuvio/Stremio addon |
+| `server/follows.ts`, `server/notify.ts` | Follows, the torrent watcher, the schedule, and ntfy/Discord delivery |
+| `server/auth.ts` | Sign-in, sessions, setup lock |
 | `web/src` | Dashboard (React) |
 | `desktop` | Windows app (Electron) |
 

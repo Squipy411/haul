@@ -1,32 +1,34 @@
 import { useEffect, useState } from 'react';
-import type { TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
+import { Mark } from '../components/ui';
 import { useToast } from '../lib';
 
-export function Setup({ onDone }: { onDone: () => void }) {
+export function Setup({ createPassword, onDone }: { createPassword: boolean; onDone: () => void }) {
   const toast = useToast();
   const [apiKey, setApiKey] = useState('');
-  const [account, setAccount] = useState<TorboxAccount | null>(null);
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [moviesDir, setMoviesDir] = useState('');
   const [tvDir, setTvDir] = useState('');
 
   useEffect(() => {
-    api.settings().then((value) => { setMoviesDir(value.moviesDir); setTvDir(value.tvDir); }, () => undefined);
+    api.setupDefaults().then((value) => { setMoviesDir(value.moviesDir); setTvDir(value.tvDir); }, () => undefined);
   }, []);
 
   const finish = async () => {
+    setError('');
+    if (createPassword && password.length < 8) return setError('Choose a password of at least 8 characters.');
+    if (createPassword && password !== confirm) return setError('The two passwords are different.');
     setBusy(true);
     try {
-      const result = await api.testTorbox(apiKey.trim());
-      setAccount(result);
-      if (!result.ok) return;
-      await api.saveSettings({ torboxApiKey: apiKey.trim(), moviesDir, tvDir });
+      await api.setup({ torboxApiKey: apiKey.trim(), moviesDir, tvDir, password: createPassword ? password : undefined });
       const broken = (await api.checkFolders()).results.filter((folder) => !folder.ok);
-      if (broken.length) toast(`Can't write to ${broken.map((folder) => folder.dir).join(', ')}. Fix it in Settings.`, 'error');
+      if (broken.length) toast(`Haul can't save to ${broken.map((folder) => folder.dir).join(', ')}. Fix the folder permissions, then check Settings.`, 'error');
       onDone();
-    } catch (error) {
-      toast((error as Error).message, 'error');
+    } catch (failure) {
+      setError((failure as Error).message);
     } finally {
       setBusy(false);
     }
@@ -34,27 +36,31 @@ export function Setup({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="gate">
-      <form className="gate-inner" onSubmit={(event) => { event.preventDefault(); void finish(); }}>
-        <div className="brand"><img src="/icon.svg" alt="" />HAUL</div>
-        <h1>Connect TorBox</h1>
-        <ol>
-          <li>Paste your TorBox API key. Torrents run on TorBox, never on this server.</li>
-          <li>Check where films and series should be saved.</li>
-          <li>Later, add the addon URL from Library to Nuvio.</li>
-        </ol>
-        <label className="field">
-          <span>API key</span>
-          <input className="input mono" type="password" autoComplete="off" autoFocus value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAccount(null); }} />
-          <a className="hint" href="https://torbox.app/settings" target="_blank" rel="noreferrer">Find it at torbox.app/settings ↗</a>
-        </label>
-        {account && (account.ok
-          ? <div className="note info">Connected · {account.plan} plan</div>
-          : <div className="note bad">{account.error}</div>)}
-        <div className="form-grid">
-          <label className="field"><span>Films folder</span><input className="input mono" value={moviesDir} onChange={(event) => setMoviesDir(event.target.value)} /></label>
-          <label className="field"><span>Series folder</span><input className="input mono" value={tvDir} onChange={(event) => setTvDir(event.target.value)} /></label>
+      <form className="gate-card" onSubmit={(event) => { event.preventDefault(); void finish(); }}>
+        <div className="wordmark"><Mark />Haul</div>
+        <h1>{createPassword ? 'Set up Haul' : 'Connect TorBox'}</h1>
+        <p>Haul finds films and shows, has TorBox download them, and saves the files here, named for Plex, Jellyfin and Nuvio.</p>
+        {createPassword && (
+          <div className="panel">
+            <div className="two">
+              <div className="field"><label htmlFor="setup-pw">Password</label><input id="setup-pw" className="input" type="password" autoComplete="new-password" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} /><span className="hint">At least 8 characters. Anyone who opens Haul needs it.</span></div>
+              <div className="field"><label htmlFor="setup-pw2">Type it again</label><input id="setup-pw2" className="input" type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></div>
+            </div>
+          </div>
+        )}
+        <div className="panel">
+          <div className="field">
+            <label htmlFor="setup-key">TorBox API key</label>
+            <input id="setup-key" className="input code" type="password" autoComplete="off" autoFocus={!createPassword} value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+            <span className="hint">Find it at <a href="https://torbox.app/settings" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>torbox.app/settings</a>. It stays on this machine.</span>
+          </div>
+          <div className="two">
+            <div className="field"><label htmlFor="setup-movies">Movies folder</label><input id="setup-movies" className="input code" value={moviesDir} onChange={(event) => setMoviesDir(event.target.value)} /></div>
+            <div className="field"><label htmlFor="setup-tv">Shows folder</label><input id="setup-tv" className="input code" value={tvDir} onChange={(event) => setTvDir(event.target.value)} /></div>
+          </div>
         </div>
-        <div><button className="btn primary lg" disabled={!apiKey.trim() || busy}>{busy && <span className="spinner" />}Connect</button></div>
+        {error && <div className="notice negative">{error}</div>}
+        <div><button className="btn primary" disabled={!apiKey.trim() || busy}>{busy && <span className="spinner" />}{createPassword ? 'Finish setup' : 'Connect'}</button></div>
       </form>
     </div>
   );

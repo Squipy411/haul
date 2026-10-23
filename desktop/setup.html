@@ -5,39 +5,42 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
   <title>Haul</title>
   <style>
-    :root { color-scheme: dark; --line: rgba(236, 232, 223, 0.17); --muted: #9b968b; --accent: #ff5f1f; }
+    :root { color-scheme: dark; --line: #444444; --muted: #b4b4b4; --faint: #949494; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; align-content: center; padding: 40px 28px; background: #0f0f0d; color: #ece8df; font: 14px/1.5 'Segoe UI', system-ui, sans-serif; }
-    form { width: min(560px, 100%); margin: 0 auto; display: grid; gap: 22px; }
-    .brand { display: flex; align-items: center; gap: 10px; font: 600 15px Consolas, ui-monospace, monospace; letter-spacing: 0.22em; }
-    .brand img { width: 22px; height: 22px; border-radius: 4px; }
-    h1 { margin: 0; font: 400 50px/1 Georgia, 'Times New Roman', serif; letter-spacing: -0.015em; }
-    p { margin: 0; color: var(--muted); }
-    .choice { display: grid; grid-template-columns: 18px 1fr; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); cursor: pointer; }
-    .choice:last-of-type { border-bottom: 1px solid var(--line); }
-    .choice input { accent-color: var(--accent); margin-top: 3px; }
-    .choice b { display: block; font-weight: 600; }
+    body { margin: 0; min-height: 100vh; display: grid; align-content: center; padding: 40px 28px; background: #000; color: #fff; font: 14px/20px 'Segoe UI Variable Text', 'Segoe UI', -apple-system, system-ui, sans-serif; }
+    form { width: min(560px, 100%); margin: 0 auto; display: grid; gap: 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; }
+    .brand img { width: 24px; height: 24px; border-radius: 6px; }
+    h1 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 600; }
+    .panel { display: grid; border-radius: 16px; background: #111; overflow: hidden; }
+    .choice { display: grid; grid-template-columns: 18px 1fr; gap: 12px; padding: 16px 18px; cursor: pointer; }
+    .choice + .choice, .share + .choice { border-top: 1px solid #1e1e1e; }
+    .choice input { accent-color: #fff; margin-top: 2px; }
+    .choice b { display: block; font-weight: 500; }
     .choice span span { color: var(--muted); font-size: 13px; }
-    input[type=text] { display: block; width: 100%; height: 36px; margin-top: 10px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--line); background: #0b0b09; color: inherit; font: 13px Consolas, ui-monospace, monospace; outline: none; }
-    input[type=text]:focus { border-color: var(--accent); }
-    button { justify-self: start; height: 40px; padding: 0 20px; border: 0; border-radius: 4px; background: var(--accent); color: #170903; font: 600 14px inherit; cursor: pointer; }
+    input[type=text] { display: block; width: 100%; height: 40px; margin-top: 10px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: #000; color: inherit; font: 13px Consolas, ui-monospace, monospace; outline: none; }
+    input[type=text]:focus { border-color: #fff; }
+    .share { display: flex; gap: 10px; align-items: flex-start; padding: 0 18px 16px 48px; color: var(--muted); font-size: 13px; cursor: pointer; }
+    .share input { accent-color: #fff; margin-top: 2px; }
+    button { justify-self: start; height: 36px; padding: 0 18px; border: 0; border-radius: 999px; background: #fff; color: #000; font: 500 14px inherit; cursor: pointer; }
     button:disabled { opacity: 0.5; }
-    .error { color: #ef6a5b; min-height: 20px; }
+    .error { color: #e5566f; min-height: 20px; }
   </style>
 </head>
 <body>
   <form id="form">
     <div class="brand"><img src="icon.png" alt="" />HAUL</div>
     <h1>Where should Haul run?</h1>
-    <div>
+    <div class="panel">
       <label class="choice">
-        <input type="radio" name="mode" value="remote" checked />
-        <span><b>My Haul server</b><span>Use the server on the ThinkStation. Downloads land there and stream to Nuvio.</span>
-          <input type="text" id="url" value="http://10.0.0.241:60700" spellcheck="false" /></span>
+        <input type="radio" name="mode" value="local" checked />
+        <span><b>This PC</b><span>Haul runs inside this app and downloads to your Videos folder. Keep the app open while it downloads.</span></span>
       </label>
+      <label class="share"><input type="checkbox" id="share" />Let Nuvio on a TV or phone play this PC's library (opens port 60700 on your home network)</label>
       <label class="choice">
-        <input type="radio" name="mode" value="local" />
-        <span><b>This PC</b><span>Run Haul inside this app and download to your Videos folder. Keep the app open while it downloads.</span></span>
+        <input type="radio" name="mode" value="remote" />
+        <span><b>A Haul server</b><span>Haul already running in Docker on a NAS or home server. Downloads land there.</span>
+          <input type="text" id="url" placeholder="http://192.168.1.20:60700" spellcheck="false" /></span>
       </label>
     </div>
     <div class="error" id="error"></div>

@@ -73,6 +73,8 @@ export interface Settings {
     preferCached: boolean;
     allowHdr: boolean;
     allowUpscaled: boolean;
+    /** Favour larger files when Haul picks a version on its own. */
+    preferLarger: boolean;
     blockedWords: string[];
   };
   downloads: {
@@ -91,16 +93,28 @@ export interface Settings {
   library: {
     rescanMinutes: number;
   };
+  notifications: {
+    /** Nothing is sent until this is on, so a fresh install never posts to ntfy.sh. */
+    enabled: boolean;
+    /** ntfy server, e.g. https://ntfy.sh or your own. */
+    ntfyServer: string;
+    ntfyTopic: string;
+    /** Masked in the dashboard, like the TorBox key. */
+    ntfyToken: string;
+    discordWebhook: string;
+    downloadFinished: boolean;
+    downloadFailed: boolean;
+  };
   passwordSet: boolean;
 }
 
-export type SettingsPatch = Partial<Omit<Settings, 'passwordSet' | 'sources' | 'quality' | 'downloads' | 'addon' | 'library'>> & {
+export type SettingsPatch = Partial<Omit<Settings, 'passwordSet' | 'sources' | 'quality' | 'downloads' | 'addon' | 'library' | 'notifications'>> & {
   sources?: Partial<Settings['sources']>;
   quality?: Partial<Settings['quality']>;
   downloads?: Partial<Settings['downloads']>;
   addon?: Partial<Settings['addon']>;
   library?: Partial<Settings['library']>;
-  password?: string;
+  notifications?: Partial<Settings['notifications']>;
 };
 
 export interface TorboxAccount {
@@ -113,13 +127,71 @@ export interface TorboxAccount {
 
 export interface Status {
   version: string;
-  authRequired: boolean;
+  /** Signed in (or the Windows app's own window). */
   authenticated: boolean;
+  /** First run of a server install: setup must create a password. */
+  needsPassword: boolean;
+  passwordSet: boolean;
+  canRemovePassword: boolean;
   setupComplete: boolean;
   torboxConfigured: boolean;
   activeDownloads: number;
+  /** Bytes per second across downloads to this machine right now. */
+  transferSpeed: number;
   libraryCounts: { movies: number; series: number; episodes: number };
   desktop: boolean;
+  update: { version: string; url: string } | null;
+}
+
+/** A show or movie you follow: Haul watches the torrent sources for it. */
+export interface Follow {
+  id: string;
+  type: MediaType;
+  imdbId: string;
+  title: string;
+  year?: number;
+  poster?: string;
+  /** Download new releases as soon as a good one appears. */
+  autoDownload: boolean;
+  createdAt: number;
+  /** Series: only episodes after this one count as new. */
+  since?: { season: number; episode: number };
+  /** Per episode ("8:12") or "movie": what Haul has found and done. */
+  found: Record<string, FollowHit>;
+}
+
+export interface FollowHit {
+  foundAt: number;
+  release: string;
+  resolution: Resolution;
+  cached: boolean;
+  notifiedAt?: number;
+  downloadedAt?: number;
+  jobId?: string;
+  /** Lower quality seen first; Haul waits a while for the preferred one. */
+  waitingForBetter?: boolean;
+}
+
+export interface ScheduleItem {
+  imdbId: string;
+  type: MediaType;
+  title: string;
+  poster?: string;
+  background?: string;
+  season?: number;
+  episode?: number;
+  episodeTitle?: string;
+  released: string;
+  followed: boolean;
+  state: 'upcoming' | 'aired' | 'searching' | 'available' | 'downloading' | 'owned';
+  release?: string;
+}
+
+export interface SetupRequest {
+  password?: string;
+  torboxApiKey: string;
+  moviesDir?: string;
+  tvDir?: string;
 }
 
 export interface MetaPreview {
@@ -149,6 +221,8 @@ export interface Episode {
 
 export interface Meta extends MetaPreview {
   year?: number;
+  /** Release date (movies) */
+  released?: string;
   runtime?: string;
   cast?: string[];
   director?: string[];
@@ -157,6 +231,7 @@ export interface Meta extends MetaPreview {
   episodes: Episode[];
   seasons: number[];
   ownedMovie?: boolean;
+  follow?: Follow | null;
 }
 
 export interface HomeRow {
@@ -218,6 +293,17 @@ export interface Job {
   updatedAt: number;
   completedAt?: number;
   nextAttemptAt?: number;
+}
+
+/** Aired episodes that come after the newest one you own, for a show in your library. */
+export interface NewEpisodes {
+  imdbId: string;
+  name: string;
+  poster?: string;
+  background?: string;
+  season: number;
+  episodes: Array<{ episode: number; title: string; released?: string }>;
+  latest: string;
 }
 
 export interface SeasonPlanItem {

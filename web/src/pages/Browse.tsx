@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react';
 import type { MediaType, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, PosterCard } from '../components/ui';
-import { useRouter } from '../lib';
+import { useCrumb } from '../shell';
 
 const GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller'];
 
 export function Browse({ type, catalog }: { type: MediaType; catalog: string }) {
-  const { back } = useRouter();
   const year = new Date().getFullYear();
   const [genre, setGenre] = useState<string>(catalog === 'year' ? String(year) : '');
   const [items, setItems] = useState<MetaPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState(false);
+
+  const noun = type === 'series' ? 'shows' : 'movies';
+  const title = catalog === 'top' ? `Popular ${noun}` : catalog === 'year' ? `New ${noun}` : `Top rated ${noun}`;
+  useCrumb(title);
 
   const load = async (skip: number) => {
     setLoading(true);
@@ -34,27 +37,20 @@ export function Browse({ type, catalog }: { type: MediaType; catalog: string }) 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setItems([]); void load(0); }, [type, catalog, genre]);
 
-  const noun = type === 'series' ? 'series' : 'films';
-  const title = catalog === 'top' ? `Popular ${noun}` : catalog === 'year' ? `New ${noun}` : `Top rated ${noun}`;
   const options = catalog === 'year' ? Array.from({ length: 8 }, (_, index) => String(year - index)) : ['', ...GENRES];
 
   return (
-    <div className="page">
-      <button className="btn quiet" style={{ marginLeft: -8, marginBottom: 10 }} onClick={() => back('/')}>← Back</button>
-      <div className="page-head" style={{ display: 'block' }}>
-        <h1 className="page-title">{title}</h1>
-        <div className="filters" style={{ marginTop: 18 }}>
-          {options.map((option) => (
-            <button key={option || 'all'} className={genre === option ? 'on' : ''} onClick={() => setGenre(option)}>{option || 'All'}</button>
-          ))}
-        </div>
+    <div className="canvas">
+      <div className="title-row"><h1>{title}</h1></div>
+      <div className="row" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 22 }}>
+        {options.map((option) => (
+          <button key={option || 'all'} className={`btn sm ${genre === option ? 'primary' : ''}`} onClick={() => setGenre(option)}>{option || 'All genres'}</button>
+        ))}
       </div>
       {error && <ErrorNote message={error} onRetry={() => load(items.length)} />}
       <div className="grid">{items.map((item) => <PosterCard key={item.id} item={item} />)}</div>
       {loading && <Loading />}
-      {!loading && !done && items.length > 0 && (
-        <div style={{ marginTop: 30 }}><button className="btn" onClick={() => load(items.length)}>Load more</button></div>
-      )}
+      {!loading && !done && items.length > 0 && <div style={{ marginTop: 28 }}><button className="btn" onClick={() => load(items.length)}>Load more</button></div>}
     </div>
   );
 }
