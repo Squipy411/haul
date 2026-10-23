@@ -56,7 +56,8 @@ function preview(raw: any, type: MediaType): MetaPreview | null {
     poster: upgradeImage(raw.poster, 'poster') || (id.startsWith('tt') ? posterFor(id) : undefined),
     background: upgradeImage(raw.background, 'background'),
     logo: upgradeImage(raw.logo, 'logo'),
-    releaseInfo: raw.releaseInfo || (raw.year ? String(raw.year) : undefined),
+    // "2008-2013" and "2008–2013" both appear upstream; show one.
+    releaseInfo: (raw.releaseInfo || (raw.year ? String(raw.year) : undefined))?.replace(/^(\d{4})\s*[-–]\s*(\d{4})?$/, (_whole: string, start: string, end?: string) => `${start}–${end ?? ''}`),
     imdbRating: raw.imdbRating || undefined,
     description: raw.description || undefined,
     genres: raw.genres || raw.genre || undefined

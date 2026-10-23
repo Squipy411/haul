@@ -119,7 +119,7 @@ On a phone, tap the picture to show or hide the controls, double-tap the left or
 
 If the stream breaks or stalls partway through (TorBox hiccups, Wi-Fi drops), the player starts it again from the same spot by itself, and carries on when your connection comes back.
 
-Keys: Space or K play/pause, ← → (or J L) 10 seconds, ↑ ↓ volume, M mute, C subtitles on or off, F full screen, N next episode.
+Keys: Space or K play/pause, ← → (or J L) 10 seconds, ↑ ↓ volume, M mute, C subtitles on or off, F full screen, N next episode, ? shows them all in the player.
 
 ## Phone notifications
 

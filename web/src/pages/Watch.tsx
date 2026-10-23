@@ -188,6 +188,9 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [upNextDismissed, setUpNextDismissed] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [panel, setPanel] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
+  /** The end of a film, or of the last episode out: a card instead of a bare play button. */
+  const [ended, setEnded] = useState(false);
   const [slow, setSlow] = useState(false);
   /** Where the bar is being dragged to; the knob follows the finger and the seek happens on release. */
   const [scrub, setScrub] = useState<number | null>(null);
@@ -504,6 +507,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         arrowdown: () => setVolume((value) => Math.max(0, value - 0.1)),
         m: () => setMuted((value) => !value),
         c: toggleSubtitles,
+        '?': () => setKeysOpen((value) => !value),
+        escape: keysOpen ? () => setKeysOpen(false) : undefined,
         f: toggleFullscreen,
         n: playNext
       } as Record<string, (() => void) | undefined>)[key];
@@ -514,7 +519,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [playNext, reveal, skip, toggleFullscreen, togglePlay, toggleSubtitles]);
+  }, [keysOpen, playNext, reveal, skip, toggleFullscreen, togglePlay, toggleSubtitles]);
 
   const onTimeUpdate = () => {
     const element = video.current!;
@@ -531,6 +536,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     save();
     setPlaying(false);
     if (session.next && !upNextDismissed) setCountdown(8);
+    else if (!session.next) setEnded(true);
   };
 
   useEffect(() => {
@@ -570,7 +576,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         poster={session.background}
         onClick={onVideoClick}
         onDoubleClick={() => { if (pointerKind.current === 'mouse') toggleFullscreen(); }}
-        onPlay={() => { setPlaying(true); reveal(); }}
+        onPlay={() => { setPlaying(true); setEnded(false); reveal(); }}
         onPause={() => { setPlaying(false); setVisible(true); save(); }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => { setWaiting(false); everPlayed.current = true; }}
@@ -598,7 +604,17 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       {waiting && slow && !failure && (
         <div className="player-wait">{session.kind === 'torbox' ? 'TorBox is still preparing the video…' : session.converting ? 'Converting the video on your server…' : 'Still loading…'}</div>
       )}
-      {!playing && !waiting && !failure && countdown === null && (
+      {ended && !failure && (
+        <div className="player-message player-end">
+          <h1>{session.type === 'series' ? `That's the latest episode of ${session.title}` : `You've finished ${session.title}`}</h1>
+          {session.type === 'series' && <p>New episodes show up here when they're out. Follow the show to get told the moment one is.</p>}
+          <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn primary" onClick={onLeave}>Back to {session.title}</button>
+            <button className="btn" onClick={() => { seek(0); void video.current?.play(); }}>Watch again</button>
+          </div>
+        </div>
+      )}
+      {!playing && !waiting && !failure && !ended && countdown === null && (
         <button className="player-center player-big" onClick={togglePlay} aria-label="Play"><Play size={40} fill="currentColor" /></button>
       )}
 
@@ -632,6 +648,17 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
             <button className="btn primary sm" onClick={playNext}>{countdown !== null ? `Play in ${countdown}` : 'Play now'}</button>
             <button className="btn ghost sm" onClick={() => { setUpNextDismissed(true); setCountdown(null); }}>Hide</button>
           </div>
+        </div>
+      )}
+
+      {keysOpen && (
+        <div className="player-keys" role="dialog" aria-label="Keyboard shortcuts">
+          <div className="player-panel-head"><b>Keyboard shortcuts</b><button className="player-icon" onClick={() => setKeysOpen(false)} aria-label="Close"><X size={18} /></button></div>
+          <dl>
+            {[['Space or K', 'Play or pause'], ['← →  or  J L', 'Back or forward 10 seconds'], ['↑ ↓', 'Volume'], ['M', 'Mute'], ['C', 'Subtitles on or off'], ['F', 'Full screen'], ['N', 'Next episode'], ['?', 'Show or hide this']].map(([key, what]) => (
+              <div key={key}><dt><kbd>{key}</kbd></dt><dd>{what}</dd></div>
+            ))}
+          </dl>
         </div>
       )}
 
@@ -700,6 +727,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
                     </DropdownMenu.RadioGroup>
                   </>
                 )}
+                <DropdownMenu.Separator className="player-menu-rule" />
+                <DropdownMenu.Item className="popover-item hide-touch" onSelect={() => setKeysOpen(true)}>Keyboard shortcuts<kbd className="faint">?</kbd></DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>

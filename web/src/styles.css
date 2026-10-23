@@ -513,7 +513,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; text-wrap: balance; }
 .player-cues { position: absolute; left: 0; right: 0; bottom: 12%; z-index: 1; display: grid; justify-items: center; gap: 4px; padding: 0 6%; pointer-events: none; transition: bottom 0.2s; }
 .player.show-controls .player-cues { bottom: max(12%, 120px); }
 .player-cues span { max-width: 60ch; padding: 2px 10px; border-radius: 6px; background: rgba(0, 0, 0, 0.72); font-size: clamp(16px, 2.4vw, 30px); line-height: 1.35; text-align: center; white-space: pre-line; }
-.player-skip { position: absolute; right: max(24px, env(safe-area-inset-right, 0px)); bottom: 120px; z-index: 3; }
+.player-skip { position: absolute; right: max(24px, env(safe-area-inset-right, 0px)); bottom: 120px; z-index: 3; border-color: rgba(255, 255, 255, 0.55); background: rgba(0, 0, 0, 0.72); color: #fff; } /* taste-skill-ignore: must read over any picture */
+.player-skip:hover { border-color: #fff; background: rgba(0, 0, 0, 0.88); }
 .player-next { position: absolute; right: max(24px, env(safe-area-inset-right, 0px)); bottom: 120px; z-index: 3; width: min(320px, calc(100vw - 48px)); display: grid; gap: 6px; padding: 16px; border-radius: var(--radius-card); background: #111; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6); } /* taste-skill-ignore: floats over video */
 .player-next .faint { font-size: 12px; }
 .player-message { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: 12px; padding: 24px; text-align: center; background: rgba(0, 0, 0, 0.8); }
@@ -634,4 +635,15 @@ a.episode-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .key-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 16px var(--gutter) 0; max-width: calc(1500px - 2 * var(--gutter)); }
 .key-banner a { color: inherit; font-weight: 600; text-decoration: underline; }
 @media (max-width: 900px) { .key-banner { margin: 12px max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); } }
+
+/* ---------- player: keyboard shortcuts (?) ---------- */
+.player-keys { position: absolute; top: 50%; left: 50%; z-index: 5; width: min(380px, calc(100vw - 32px)); padding: 14px 0 12px; border-radius: var(--radius-card); background: rgba(12, 12, 12, 0.96); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6); transform: translate(-50%, -50%); animation: fade 0.15s ease-out; } /* taste-skill-ignore: floats over video */
+.player-keys dl { display: grid; gap: 2px; margin: 10px 0 0; padding: 0 20px; }
+.player-keys dl > div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; align-items: center; padding: 6px 0; font-size: 14px; }
+.player-keys dd { margin: 0; color: rgba(255, 255, 255, 0.75); }
+.player-keys kbd { font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.player-menu-rule { height: 1px; margin: 6px 4px; background: rgba(255, 255, 255, 0.1); }
+.player-menu kbd { font: inherit; font-size: 13px; }
+@media (hover: none) { .hide-touch, .player-menu-rule { display: none; } }
+.player-end { background: rgba(0, 0, 0, 0.72); animation: fade 0.3s ease-out; } /* taste-skill-ignore: neutral scrim over the last frame */
 
