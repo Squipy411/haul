@@ -141,7 +141,11 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
               <p>{error}</p>
               <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button className="btn primary" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
-                {source !== 'torbox' && <button className="btn" onClick={() => navigate(`/watch/${type}/${id}?${new URLSearchParams({ ...(season !== undefined ? { s: String(season), e: String(episode) } : {}), src: 'torbox' })}`, { replace: true })}>Stream from TorBox</button>}
+                {source !== 'torbox' && <button className="btn" onClick={() => navigate(`/watch/${type}/${id}?${new URLSearchParams({ ...(season !== undefined ? { s: String(season), e: String(episode) } : {}), src: 'torbox' })}`, { replace: true })}>{hash ? 'Play the best version instead' : 'Stream from TorBox'}</button>}
+                {/* Nothing ready to stream: the versions to download (or pick from) are one step away. */}
+                {/Nothing is ready|no longer listed|has no file for|doesn't have this version/i.test(error) && (
+                  <button className="btn" onClick={() => navigate(type === 'series' ? `/title/series/${id}?season=${season}&tab=download` : `/title/movie/${id}`, { replace: true })}>See versions to download</button>
+                )}
                 <button className="btn ghost" onClick={leave}>Back</button>
               </div>
             </>
