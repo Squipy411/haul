@@ -1,0 +1,21 @@
+# Generic install. On ZimaOS / CasaOS use deploy/zimaos/docker-compose.yml instead.
+services:
+  haul:
+    image: ghcr.io/squipy411/haul:latest
+    # Or build from this folder instead of pulling:
+    # build: .
+    container_name: haul
+    restart: unless-stopped
+    ports:
+      - "60700:60700"
+    environment:
+      TZ: America/Los_Angeles
+      # Optional: preset the key instead of pasting it into the setup screen.
+      # TORBOX_API_KEY: ""
+      # Optional: own new files as this user/group (e.g. 1000/1000).
+      # PUID: "1000"
+      # PGID: "1000"
+    volumes:
+      - ./data:/data
+      # Your media root. Haul writes to /media/Movies and "/media/TV Shows" by default.
+      - /path/to/Media:/media

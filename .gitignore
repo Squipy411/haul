@@ -1,0 +1,9 @@
+node_modules/
+dist/
+release/
+data/
+test-results/
+*.log
+.DS_Store
+.claude/
+scripts/preview.mjs

@@ -1,0 +1,55 @@
+# ZimaOS / CasaOS app definition. Media lives in /DATA/Media (Movies, "TV Shows").
+name: haul
+services:
+  haul:
+    image: ghcr.io/squipy411/haul:latest
+    container_name: haul
+    restart: unless-stopped
+    ports:
+      - target: 60700
+        published: "60700"
+        protocol: tcp
+    environment:
+      TZ: America/Los_Angeles
+    volumes:
+      - type: bind
+        source: /DATA/AppData/haul/data
+        target: /data
+      - type: bind
+        source: /DATA/Media
+        target: /media
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    x-casaos:
+      ports:
+        - container: "60700"
+          description:
+            en_us: Web dashboard and Nuvio addon
+      volumes:
+        - container: /data
+          description:
+            en_us: Haul settings, download queue and library index
+        - container: /media
+          description:
+            en_us: Your media folder (Movies and TV Shows are written here)
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: haul
+  author: Squipy411
+  developer: Squipy411
+  category: Media
+  icon: https://raw.githubusercontent.com/Squipy411/haul/main/web/public/icon.png
+  title:
+    en_us: Haul
+  tagline:
+    en_us: Request whole seasons and movies, downloaded through TorBox
+  description:
+    en_us: Browse a catalog, pick a season pack or a whole season, and Haul fetches it through TorBox, renames it for your library and serves it to Nuvio and Stremio. No Sonarr, Radarr or Seerr needed.
+  index: /
+  port_map: "60700"
+  scheme: http

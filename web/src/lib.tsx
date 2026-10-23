@@ -1,0 +1,185 @@
+import { CheckCircle2, XCircle } from 'lucide-react';
+import {
+  type AnchorHTMLAttributes, type MouseEvent, type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState
+} from 'react';
+
+// ---------- Router ----------
+interface RouterValue {
+  path: string;
+  search: URLSearchParams;
+  navigate: (to: string, options?: { replace?: boolean }) => void;
+}
+
+const RouterContext = createContext<RouterValue>({ path: '/', search: new URLSearchParams(), navigate: () => undefined });
+
+export function RouterProvider({ children }: { children: ReactNode }) {
+  const [location, setLocation] = useState(() => ({ path: window.location.pathname, search: window.location.search }));
+  useEffect(() => {
+    const onPop = () => setLocation({ path: window.location.pathname, search: window.location.search });
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const navigate = useCallback((to: string, options: { replace?: boolean } = {}) => {
+    if (to === window.location.pathname + window.location.search) return;
+    window.history[options.replace ? 'replaceState' : 'pushState'](null, '', to);
+    const url = new URL(to, window.location.origin);
+    setLocation({ path: url.pathname, search: url.search });
+    if (!options.replace) window.scrollTo({ top: 0 });
+  }, []);
+  const value = useMemo(() => ({ path: location.path, search: new URLSearchParams(location.search), navigate }), [location, navigate]);
+  return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
+}
+
+export const useRouter = () => useContext(RouterContext);
+
+export function Link({ to, onClick, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) {
+  const { navigate } = useRouter();
+  return (
+    <a
+      href={to}
+      onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+        onClick?.(event);
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+        event.preventDefault();
+        navigate(to);
+      }}
+      {...rest}
+    />
+  );
+}
+
+// ---------- Toasts ----------
+interface Toast { id: number; message: ReactNode; kind: 'ok' | 'error' }
+const ToastContext = createContext<(message: ReactNode, kind?: Toast['kind']) => void>(() => undefined);
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextId = useRef(1);
+  const push = useCallback((message: ReactNode, kind: Toast['kind'] = 'ok') => {
+    const id = nextId.current++;
+    setToasts((current) => [...current.slice(-3), { id, message, kind }]);
+    setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), kind === 'error' ? 7000 : 4500);
+  }, []);
+  return (
+    <ToastContext.Provider value={push}>
+      {children}
+      <div className="toasts" role="status" aria-live="polite">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast ${toast.kind === 'error' ? 'error' : ''}`}>
+            <span className="t-icon">{toast.kind === 'error' ? <XCircle size={18} /> : <CheckCircle2 size={18} />}</span>
+            <div>{toast.message}</div>
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+export const useToast = () => useContext(ToastContext);
+
+// ---------- Data hooks ----------
+export function useAsync<T>(load: () => Promise<T>, deps: unknown[]): { data: T | undefined; error: string | undefined; loading: boolean; reload: () => void; setData: (value: T) => void } {
+  const [state, setState] = useState<{ data?: T; error?: string; loading: boolean }>({ loading: true });
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setState((current) => ({ data: current.data, loading: true }));
+    load().then(
+      (data) => alive && setState({ data, loading: false }),
+      (error: Error) => alive && setState({ error: error.message, loading: false })
+    );
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, version]);
+  return {
+    data: state.data,
+    error: state.error,
+    loading: state.loading,
+    reload: () => setVersion((value) => value + 1),
+    setData: (data: T) => setState({ data, loading: false })
+  };
+}
+
+export function usePolling(callback: () => void, intervalMs: number, active = true): void {
+  const saved = useRef(callback);
+  saved.current = callback;
+  useEffect(() => {
+    if (!active) return;
+    const tick = () => { if (document.visibilityState === 'visible') saved.current(); };
+    const timer = setInterval(tick, intervalMs);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+  }, [intervalMs, active]);
+}
+
+// ---------- Formatting ----------
+export function bytes(value?: number): string {
+  if (!value || value <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
+  return `${size >= 100 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+export function speed(value?: number): string {
+  return value && value > 0 ? `${bytes(value)}/s` : '';
+}
+
+export function duration(seconds?: number): string {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
+export function ago(timestamp?: number): string {
+  if (!timestamp) return 'never';
+  const seconds = Math.round((Date.now() - timestamp) / 1000);
+  if (seconds < 45) return 'just now';
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+export function airDate(value?: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+export function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+export function episodeRange(episodes: number[]): string {
+  if (!episodes.length) return '';
+  const sorted = [...episodes].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let start = sorted[0]!;
+  let previous = start;
+  for (const value of [...sorted.slice(1), Number.NaN]) {
+    if (value === previous + 1) { previous = value; continue; }
+    parts.push(start === previous ? `E${start}` : `E${start}–${previous}`);
+    start = value;
+    previous = value;
+  }
+  return parts.join(', ');
+}
+
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
+}

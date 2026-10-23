@@ -1,0 +1,73 @@
+{
+  "name": "haul",
+  "productName": "Haul",
+  "version": "1.0.0",
+  "description": "All-in-one TorBox media downloader: browse, pick a season pack or a whole season, and Haul downloads, renames and hosts it for Nuvio and Stremio.",
+  "author": "Squipy411",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch server/main.ts",
+    "dev:web": "vite",
+    "build:web": "vite build",
+    "build:server": "esbuild server/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs --legal-comments=none",
+    "build": "npm run build:web && npm run build:server",
+    "start": "node dist/server.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "desktop": "npm run build && electron .",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^9.2.1",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "build": {
+    "appId": "community.haul.desktop",
+    "productName": "Haul",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "desktop/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "desktop/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Haul-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Haul-Portable-${version}.${ext}"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Haul</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; font: 14px/1.5 'Segoe UI', Inter, system-ui, sans-serif; color: #eef0f6;
+      background: radial-gradient(900px 480px at 50% -10%, rgba(106, 99, 255, 0.24), transparent 60%), #08090d; }
+    .card { width: min(560px, 100%); padding: 32px; border-radius: 22px; background: rgba(18, 21, 29, 0.92); border: 1px solid rgba(255,255,255,0.12); display: grid; gap: 18px; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+    p { margin: 0; color: #9aa0b4; }
+    .options { display: grid; gap: 12px; }
+    label.option { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); background: #12151d; cursor: pointer; }
+    label.option:has(input:checked) { border-color: #7d8bff; background: rgba(125,139,255,0.1); }
+    label.option b { display: block; font-size: 15px; }
+    input[type=text] { width: 100%; height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: #0c0e14; color: inherit; font: 13px ui-monospace, Consolas, monospace; margin-top: 10px; }
+    button { height: 46px; border: 0; border-radius: 12px; font: 600 15px inherit; color: #fff; background: linear-gradient(180deg, #8794ff, #6a63ff); cursor: pointer; }
+    button:disabled { opacity: 0.5; }
+    .error { color: #fb7185; min-height: 20px; }
+    img { width: 52px; height: 52px; }
+  </style>
+</head>
+<body>
+  <form class="card" id="form">
+    <img src="icon.png" alt="" />
+    <div>
+      <h1>Set up Haul</h1>
+      <p>Use the Haul server on your ThinkStation, or run Haul on this PC and download straight to it.</p>
+    </div>
+    <div class="options">
+      <label class="option">
+        <input type="radio" name="mode" value="remote" checked />
+        <span><b>Connect to my Haul server</b><span style="color:#9aa0b4">Recommended. Downloads land on your server and stream to Nuvio from there.</span>
+          <input type="text" id="url" value="http://10.0.0.241:60700" spellcheck="false" /></span>
+      </label>
+      <label class="option">
+        <input type="radio" name="mode" value="local" />
+        <span><b>Run Haul on this PC</b><span style="color:#9aa0b4">Downloads go to your Videos folder. Keep the app open while downloading.</span></span>
+      </label>
+    </div>
+    <div class="error" id="error"></div>
+    <button id="go">Continue</button>
+  </form>
+  <script src="setup.js"></script>
+</body>
+</html>
