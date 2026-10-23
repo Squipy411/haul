@@ -5,10 +5,13 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { downloadToFile, planChunks, setStallTimeout } from '../server/downloader';
+import { downloadToFile, planChunks, tuning } from '../server/downloader';
 
+// Small sizes keep this quick on emulated (arm64) builders; the logic is the same at 70 GB.
 const MB = 1024 * 1024;
-const data = crypto.randomBytes(70 * MB);
+const KB = 1024;
+Object.assign(tuning, { minSplit: 1 * MB, minChunk: 256 * KB });
+const data = crypto.randomBytes(6 * MB);
 const digest = (buffer: Buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 const expected = digest(data);
 
@@ -40,8 +43,11 @@ beforeAll(async () => {
     ranges.push(req.headers.range!);
     const start = Number(range[1]);
     const end = range[2] ? Number(range[2]) : data.length - 1;
-    res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${data.length}`, 'Content-Length': end - start + 1 });
-    res.end(data.subarray(start, end + 1));
+    // A short delay, like a real server's, so parallel requests overlap.
+    setTimeout(() => {
+      res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${data.length}`, 'Content-Length': end - start + 1 });
+      res.end(data.subarray(start, end + 1));
+    }, 25);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/file.mkv`;
@@ -52,7 +58,7 @@ afterEach(() => {
   mode = 'ranges';
   ranges.length = 0;
   maxInFlight = 0;
-  setStallTimeout(60_000);
+  tuning.stallMs = 60_000;
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -66,9 +72,10 @@ const run = (file: string, connections: number) => downloadToFile(url, file, { e
 
 describe('planChunks', () => {
   it('covers the whole range with no gaps or overlaps', () => {
-    const chunks = planChunks(5 * MB, 70 * MB, 4);
-    expect(chunks[0]!.start).toBe(5 * MB);
-    expect(chunks.at(-1)!.end).toBe(70 * MB);
+    const chunks = planChunks(1 * MB, 6 * MB, 4);
+    expect(chunks.length).toBeGreaterThan(4);
+    expect(chunks[0]!.start).toBe(1 * MB);
+    expect(chunks.at(-1)!.end).toBe(6 * MB);
     chunks.slice(1).forEach((chunk, index) => expect(chunk.start).toBe(chunks[index]!.end));
   });
 });
@@ -90,8 +97,8 @@ describe('downloadToFile', () => {
     for (const chunk of chunks.slice(0, 2)) fs.writeSync(fd, data, chunk.start, chunk.end - chunk.start, chunk.start);
     chunks[0]!.done = chunks[0]!.end - chunks[0]!.start;
     chunks[1]!.done = chunks[1]!.end - chunks[1]!.start;
-    fs.writeSync(fd, data, chunks[2]!.start, MB, chunks[2]!.start);
-    chunks[2]!.done = MB;
+    fs.writeSync(fd, data, chunks[2]!.start, 100 * KB, chunks[2]!.start);
+    chunks[2]!.done = 100 * KB;
     fs.closeSync(fd);
     fs.writeFileSync(`${file}.chunks`, JSON.stringify({ size: data.length, chunks }));
 
@@ -99,15 +106,15 @@ describe('downloadToFile', () => {
     expect(digest(fs.readFileSync(file))).toBe(expected);
     const starts = ranges.map((range) => Number(/bytes=(\d+)/.exec(range)![1]));
     expect(starts).not.toContain(0);
-    expect(starts).toContain(chunks[2]!.start + MB);
+    expect(starts).toContain(chunks[2]!.start + 100 * KB);
   });
 
   it('carries on from a part file left by a single connection', async () => {
     const file = part();
-    fs.writeFileSync(file, data.subarray(0, 10 * MB));
+    fs.writeFileSync(file, data.subarray(0, 2 * MB));
     await run(file, 4);
     expect(digest(fs.readFileSync(file))).toBe(expected);
-    expect(Math.min(...ranges.map((range) => Number(/bytes=(\d+)/.exec(range)![1])))).toBe(10 * MB);
+    expect(Math.min(...ranges.map((range) => Number(/bytes=(\d+)/.exec(range)![1])))).toBe(2 * MB);
   });
 
   it('falls back to one connection when the server ignores ranges', async () => {
@@ -120,7 +127,7 @@ describe('downloadToFile', () => {
 
   it('gives up on a stalled connection so the job can retry', async () => {
     mode = 'stall';
-    setStallTimeout(300);
+    tuning.stallMs = 300;
     await expect(run(part(), 1)).rejects.toThrow(/stalled/);
   });
 });

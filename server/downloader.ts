@@ -6,15 +6,23 @@ import { pipeline } from 'node:stream/promises';
 
 export interface DownloadOptions {
   expectedSize?: number;
-  /** Parallel connections for one file. Files under 64 MB always use one. */
+  /** Parallel connections for one file. Files under tuning.minSplit always use one. */
   connections?: number;
   signal: AbortSignal;
   onProgress: (bytesOnDisk: number) => void;
 }
 
 const MB = 1024 * 1024;
-/** Below this, extra connections cost more in setup than they win in speed. */
-const MIN_SPLIT = 64 * MB;
+
+/** Sizes and timeouts; tests shrink them so they run quickly on slow, emulated builders. */
+export const tuning = {
+  /** Below this, extra connections cost more in setup than they win in speed. */
+  minSplit: 64 * MB,
+  /** Smallest piece one connection fetches. */
+  minChunk: 16 * MB,
+  /** How long a connection may go without sending anything before it's dropped and retried. */
+  stallMs: 60_000
+};
 
 /** A byte range of the file: `start` inclusive, `end` exclusive, `done` bytes written from `start`. */
 export interface Chunk { start: number; end: number; done: number }
@@ -24,7 +32,7 @@ interface ChunkState { size: number; chunks: Chunk[] }
 export function planChunks(from: number, size: number, connections: number): Chunk[] {
   const remaining = size - from;
   if (remaining <= 0) return [];
-  const length = Math.max(16 * MB, Math.ceil(remaining / (connections * 8)));
+  const length = Math.max(tuning.minChunk, Math.ceil(remaining / (connections * 8)));
   const chunks: Chunk[] = [];
   for (let start = from; start < size; start += length) chunks.push({ start, end: Math.min(size, start + length), done: 0 });
   return chunks;
@@ -32,17 +40,13 @@ export function planChunks(from: number, size: number, connections: number): Chu
 
 class RangesUnsupported extends Error {}
 
-/** How long a connection may go without sending anything before it's dropped and retried. */
-export let STALL_MS = 60_000;
-export function setStallTimeout(ms: number): void { STALL_MS = ms; }
-
-/** Aborts when no data has arrived for STALL_MS, so a stalled connection is retried instead of hanging forever. */
+/** Aborts when no data has arrived for tuning.stallMs, so a stalled connection is retried instead of hanging forever. */
 function watchdog() {
   const controller = new AbortController();
-  let timer = setTimeout(() => controller.abort(), STALL_MS);
+  let timer = setTimeout(() => controller.abort(), tuning.stallMs);
   return {
     signal: controller.signal,
-    poke() { clearTimeout(timer); timer = setTimeout(() => controller.abort(), STALL_MS); },
+    poke() { clearTimeout(timer); timer = setTimeout(() => controller.abort(), tuning.stallMs); },
     done() { clearTimeout(timer); }
   };
 }
@@ -72,7 +76,7 @@ export async function downloadToFile(url: string, partPath: string, options: Dow
   const size = options.expectedSize;
   const connections = Math.max(1, Math.min(16, Math.round(options.connections ?? 1)));
   const statePath = `${partPath}.chunks`;
-  if (size && connections > 1 && size >= MIN_SPLIT) {
+  if (size && connections > 1 && size >= tuning.minSplit) {
     try {
       await downloadInChunks(url, partPath, statePath, size, connections, options);
       return;
