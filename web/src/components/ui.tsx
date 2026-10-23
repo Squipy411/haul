@@ -5,12 +5,13 @@ import { type ReactNode, useState } from 'react';
 import type { MetaPreview } from '../../../shared/types';
 import { Link } from '../lib';
 
-/** The product's mark: a file dropping into a tray, drawn in the data hue. */
+/** The product's mark: a box opening onto a play button, for a TorBox player. */
 export function Mark({ size = 20 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 3v11m0 0-4.5-4.5M12 14l4.5-4.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 13.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width={size} height={size} viewBox="96 96 320 320" aria-hidden="true">
+      <rect x="104" y="118" width="304" height="58" rx="20" fill="#4cb3f0" transform="rotate(-11 116 176)" />
+      <rect x="120" y="208" width="272" height="200" rx="34" fill="#ffffff" />
+      <path d="M228 260 L228 356 L312 308 Z" fill="#000000" stroke="#000000" strokeWidth="18" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -19,7 +20,7 @@ export function Poster({ src, title, owned }: { src?: string; title: string; own
   const [failed, setFailed] = useState(false);
   return (
     <div className="poster">
-      {src && !failed ? <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} /> : <div className="fallback">{title}</div>}
+      {src && !failed ? <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} /> : <div className="fallback">{title}</div>}
       {owned && <span className="owned pill positive">In library</span>}
     </div>
   );

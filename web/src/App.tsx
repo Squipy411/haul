@@ -32,9 +32,14 @@ const Upcoming = lazy(() => pages.upcoming().then((module) => ({ default: module
 const Watch = lazy(() => pages.watch().then((module) => ({ default: module.Watch })));
 
 function prefetchPages(): void {
-  const load = () => { for (const page of [pages.title, pages.watch, pages.downloads, pages.upcoming, pages.library, pages.settings, pages.browse]) void page().catch(() => undefined); };
-  if ('requestIdleCallback' in window) window.requestIdleCallback(load, { timeout: 4000 });
-  else setTimeout(load, 1500);
+  const load = () => {
+    for (const page of [pages.title, pages.watch, pages.downloads, pages.upcoming, pages.library, pages.settings, pages.browse]) void page().catch(() => undefined);
+    // The stream player too, so the first press of play doesn't wait for it.
+    void import('hls.js/light').catch(() => undefined);
+  };
+  // Later rather than sooner: the page being opened (above all the player) comes first.
+  const later = () => { if ('requestIdleCallback' in window) window.requestIdleCallback(load, { timeout: 6000 }); else load(); };
+  setTimeout(later, window.location.pathname.startsWith('/watch/') ? 15_000 : 2500);
 }
 
 /** Watching comes first; the second group manages downloads and the app. On a phone the second group sits behind More. */
@@ -150,7 +155,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
       <SearchContext.Provider value={openSearch}>
         <Tooltip.Provider>
           <aside className="sidebar">
-            <Link to="/" className="wordmark"><Mark />Haul</Link>
+            <Link to="/" className="wordmark" aria-label="Haul, TorBox player"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></Link>
             <nav className="nav" aria-label="Main">
               {NAV.map(({ to, label, icon: Icon, match, group }, index) => (
                 <div key={to} style={{ display: 'contents' }}>
@@ -258,7 +263,7 @@ export function App() {
 
   useEffect(() => {
     const active = status?.activeDownloads ?? 0;
-    document.title = active ? `${speed(status?.transferSpeed) || `${active} active`} · Haul` : 'Haul';
+    document.title = active ? `${speed(status?.transferSpeed) || `${active} active`} · Haul` : 'Haul · TorBox player';
   }, [status?.activeDownloads, status?.transferSpeed]);
 
   if (!status) {

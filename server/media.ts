@@ -188,7 +188,7 @@ export function ffmpegArgs(file: string, { start, audio, mode, probe, caps }: St
     if (video?.codec === 'hevc') args.push('-tag:v', 'hvc1');
   } else {
     args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p', '-profile:v', 'high',
-      '-force_key_frames', `expr:gte(t,n_forced*${SEGMENT_SECONDS})`, '-sc_threshold', '0');
+      '-force_key_frames', 'expr:gte(t,n_forced*2)', '-sc_threshold', '0');
     // Converting 4K in real time is too much for most home servers; 1080p looks fine on a phone or laptop.
     if ((video?.height ?? 0) > 1080) args.push('-vf', 'scale=-2:1080');
   }
@@ -196,7 +196,8 @@ export function ffmpegArgs(file: string, { start, audio, mode, probe, caps }: St
   if (track && (track.codec === 'aac' || track.codec === 'mp3' || (audioPlays(track.codec, caps) && track.codec !== 'flac' && track.codec !== 'vorbis'))) args.push('-c:a', 'copy');
   else args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2');
   args.push('-sn', '-dn', '-map_metadata', '-1',
-    '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_list_size', '0', '-hls_playlist_type', 'event',
+    // Short first segments, so playback can begin after two seconds of video rather than six.
+    '-f', 'hls', '-hls_time', String(SEGMENT_SECONDS), '-hls_init_time', '2', '-hls_list_size', '0', '-hls_playlist_type', 'event',
     '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init.mp4',
     '-hls_segment_filename', path.join(dir, 'seg%d.m4s'), path.join(dir, 'playlist.m3u8'));
   return args;

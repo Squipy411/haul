@@ -37,9 +37,9 @@ export function Setup({ createPassword, onDone }: { createPassword: boolean; onD
   return (
     <div className="gate">
       <form className="gate-card" onSubmit={(event) => { event.preventDefault(); void finish(); }}>
-        <div className="wordmark"><Mark />Haul</div>
+        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></div>
         <h1>{createPassword ? 'Set up Haul' : 'Connect TorBox'}</h1>
-        <p>Haul finds films and shows, has TorBox download them, and saves the files here, named for Plex, Jellyfin and Nuvio.</p>
+        <p>Haul plays films and shows straight from your TorBox account, and downloads the ones you want to keep, named for Plex, Jellyfin and Nuvio.</p>
         {createPassword && (
           <div className="panel">
             <div className="two">

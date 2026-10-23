@@ -15,7 +15,7 @@ export function Hero({ background, logo, title, facts, description, children, fo
   const [noBackdrop, setNoBackdrop] = useState(false);
   return (
     <section className={`hero ${size}`}>
-      {background && !noBackdrop && <img className="hero-backdrop" src={background} alt="" onError={() => setNoBackdrop(true)} />}
+      {background && !noBackdrop && <img className="hero-backdrop" src={background} alt="" fetchPriority="high" decoding="async" onError={() => setNoBackdrop(true)} />}
       <div className="hero-scrim" aria-hidden="true" />
       <div className="hero-content">
         {logo && !noLogo

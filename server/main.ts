@@ -128,6 +128,12 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   jobs.start();
   updates.start();
   follows.start();
+  // Home's rows come from the catalog, cached for an hour: fetch them now and as each hour runs out,
+  // so nobody waits for them.
+  const warmCatalog = () => { void catalog.home().catch(() => undefined); };
+  warmCatalog();
+  const catalogTimer = setInterval(warmCatalog, 60 * 60_000 + 15_000);
+  catalogTimer.unref();
   console.log(`[haul] v${VERSION} listening on http://${options.host === '0.0.0.0' ? 'localhost' : options.host}:${port}`);
 
   return {
@@ -143,6 +149,7 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       jobs.stop();
       library.stop();
       transcodes.close();
+      clearInterval(catalogTimer);
       progress.flush();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

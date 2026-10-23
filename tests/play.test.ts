@@ -4,7 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Meta } from '../shared/types';
 import { type Probe, chooseMode, ffmpegArgs, parseProbe, srtToVtt, trackLabel } from '../server/media';
-import { clockSeconds, nextEpisode, rewritePlaylist } from '../server/play';
+import { clockSeconds, languageTier, nextEpisode, rewritePlaylist } from '../server/play';
+import { parseRelease } from '../server/release';
 import { ProgressStore, progressKey } from '../server/progress';
 
 const caps = { hevc: false, av1: false, ac3: false };
@@ -122,5 +123,14 @@ describe('ProgressStore', () => {
     expect(store.resumeAt(progressKey('series', 'tt1', 1, 1))).toBeUndefined();
     expect(store.resumeAt(progressKey('movie', 'tt2'))).toBeUndefined();
     expect(store.recent().map((entry) => entry.key)).toEqual([progressKey('series', 'tt1', 1, 2)]);
+  });
+});
+
+describe('languageTier', () => {
+  it('plays English releases before multi-language ones, and dubs last', () => {
+    expect(languageTier(parseRelease('Interstellar.2014.1080p.BluRay.x264-SPARKS'))).toBe(0);
+    expect(languageTier(parseRelease('Interstellar.2014.1080p.BluRay.ENG.x264'))).toBe(0);
+    expect(languageTier(parseRelease('Интерстеллар / Interstellar [2014 BDRip 1080p] Dub + MVO + Original Eng'))).toBe(1);
+    expect(languageTier(parseRelease('Интерстеллар (2014) BDRip 1080p Dub'))).toBe(2);
   });
 });

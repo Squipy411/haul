@@ -6,7 +6,24 @@ export class ApiError extends Error {
   }
 }
 
+/** Recent answers for pages you go back to: the catalog, titles and the library, kept a minute. */
+const recent = new Map<string, { at: number; value: Promise<unknown> }>();
+const CACHEABLE = /^\/api\/(home|meta\/|catalog\/|search\?)/;
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (method !== 'GET') recent.clear();
+  else if (CACHEABLE.test(path)) {
+    const hit = recent.get(path);
+    if (hit && Date.now() - hit.at < 60_000) return hit.value as Promise<T>;
+    const value = send<T>(method, path, body);
+    recent.set(path, { at: Date.now(), value });
+    value.catch(() => recent.delete(path));
+    return value;
+  }
+  return send<T>(method, path, body);
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: { 'X-Haul-Request': '1', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -20,6 +37,19 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(data?.error || `Request failed (${response.status})`, response.status);
   }
   return data as T;
+}
+
+const preparedAt = new Map<string, number>();
+
+/**
+ * Tells the server what is likely to be played next, so pressing play is near instant: `stream` starts
+ * TorBox's stream too (only for versions already in the TorBox list). Repeats within 30 s are skipped.
+ */
+export function preparePlay(target: { type: MediaType; imdbId: string; season?: number; episode?: number }, stream = false): void {
+  const key = `${target.type}:${target.imdbId}:${target.season}:${target.episode}:${stream}`;
+  if (Date.now() - (preparedAt.get(key) ?? 0) < 30_000) return;
+  preparedAt.set(key, Date.now());
+  void request('POST', '/api/play/prepare', { ...target, stream }).catch(() => undefined);
 }
 
 export const api = {

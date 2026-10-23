@@ -1,7 +1,7 @@
 {
-  "name": "Haul",
+  "name": "Haul · TorBox player",
   "short_name": "Haul",
-  "description": "Pick a show or a movie and Haul downloads it through TorBox.",
+  "description": "Watch and download films and shows from your TorBox account.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

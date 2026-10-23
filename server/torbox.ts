@@ -147,9 +147,27 @@ export class Torbox {
     return { torrentId: data?.torrent_id, queuedId: data?.queued_id, hash: data?.hash };
   }
 
+  /** How many pages the list had last time, so the next read fetches them all at once. */
+  private listPages = 1;
+
+  /** Every torrent in the account. TorBox pages at 1000; big accounts take a few requests, made together. */
   async list(): Promise<TorboxTorrent[]> {
-    const data = await this.call<TorboxTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, limit: 1000 } });
-    return Array.isArray(data) ? data : [];
+    const page = async (index: number) => {
+      const data = await this.call<TorboxTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, limit: 1000, offset: index * 1000 } });
+      return Array.isArray(data) ? data : [];
+    };
+    const pages = await Promise.all(Array.from({ length: this.listPages }, (_, index) => page(index)));
+    // The account grew past what we fetched: keep going.
+    while (pages.length < 20 && pages[pages.length - 1]!.length === 1000) pages.push(await page(pages.length));
+    while (pages.length > 1 && pages[pages.length - 1]!.length === 0) pages.pop();
+    this.listPages = pages.length;
+    return pages.flat();
+  }
+
+  /** One torrent by id: much quicker than the whole list when waiting for a new one to be ready. */
+  async torrent(id: number): Promise<TorboxTorrent | undefined> {
+    const data = await this.call<TorboxTorrent | TorboxTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, id } });
+    return Array.isArray(data) ? data[0] : data ?? undefined;
   }
 
   async downloadLink(torrentId: number, fileId: number): Promise<string> {

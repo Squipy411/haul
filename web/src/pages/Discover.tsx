@@ -1,7 +1,7 @@
 import { Download, Info, Play, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { Job, MetaPreview, WatchProgress } from '../../../shared/types';
-import { api } from '../api';
+import { api, preparePlay } from '../api';
 import { Hero } from '../components/Hero';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
 import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib';
@@ -65,7 +65,7 @@ function NewEpisodes() {
           const watch = `/watch/series/${show.imdbId}?s=${show.season}&e=${first.episode}`;
           return (
             <div key={show.imdbId} className="watch-card">
-              <Link to={watch} className="still" aria-label={`Watch ${show.name} season ${show.season} episode ${first.episode}`}>
+              <Link to={watch} className="still" onPointerEnter={() => preparePlay({ type: 'series', imdbId: show.imdbId, season: show.season, episode: first.episode }, true)} aria-label={`Watch ${show.name} season ${show.season} episode ${first.episode}`}>
                 {show.background && <img src={show.background} alt="" loading="lazy" />}
                 <span className="play-badge"><Play size={18} fill="currentColor" /></span>
               </Link>
@@ -90,6 +90,9 @@ const code = (item: WatchProgress) => (item.type === 'series' ? `S${pad(item.sea
 function ContinueWatching() {
   const { data, setData } = useAsync(() => api.continueWatching(), []);
   const items = data?.items ?? [];
+  // The first one is what you're most likely to resume: get its stream ready.
+  const first = items[0];
+  useEffect(() => { if (first) preparePlay({ type: first.type, imdbId: first.imdbId, season: first.season, episode: first.episode }, true); }, [first]);
   if (!items.length) return null;
   const forget = async (item: WatchProgress) => {
     setData({ items: items.filter((entry) => entry.key !== item.key) });
@@ -104,7 +107,7 @@ function ContinueWatching() {
           const left = item.duration ? Math.max(1, Math.round((item.duration - item.position) / 60)) : 0;
           return (
             <div key={item.key} className="watch-card">
-              <Link to={to} className="still" aria-label={`${item.upNext ? 'Play' : 'Resume'} ${item.title} ${code(item)}`}>
+              <Link to={to} className="still" onPointerEnter={() => preparePlay({ type: item.type, imdbId: item.imdbId, season: item.season, episode: item.episode }, true)} aria-label={`${item.upNext ? 'Play' : 'Resume'} ${item.title} ${code(item)}`}>
                 {(item.background || item.poster) && <img src={item.background || item.poster} alt="" loading="lazy" />}
                 <span className="play-badge"><Play size={18} fill="currentColor" /></span>
                 {!item.upNext && <i className="watched" aria-hidden="true"><b style={{ width: `${Math.min(100, (item.position / item.duration) * 100)}%` }} /></i>}
@@ -181,6 +184,11 @@ function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPrevi
   })();
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  // Load the next backdrop ahead of time so the switch doesn't flash.
+  useEffect(() => {
+    const next = picks[(index + 1) % Math.max(1, picks.length)];
+    if (next?.background) { const image = new Image(); image.decoding = 'async'; image.src = next.background; }
+  }, [index, picks]);
   useEffect(() => {
     if (paused || picks.length < 2) return;
     const timer = window.setTimeout(() => setIndex((value) => (value + 1) % picks.length), 9000);
@@ -207,7 +215,7 @@ function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPrevi
           </div>
         )}
       >
-        <Link to={watch} className="btn primary lg"><Play size={17} fill="currentColor" />{entry && !entry.upNext ? 'Resume' : 'Play'}</Link>
+        <Link to={watch} className="btn primary lg" onPointerEnter={() => preparePlay({ type: item.type, imdbId: item.id, season: item.type === 'series' ? entry?.season ?? 1 : undefined, episode: item.type === 'series' ? entry?.episode ?? 1 : undefined }, true)}><Play size={17} fill="currentColor" />{entry && !entry.upNext ? 'Resume' : 'Play'}</Link>
         <Link to={`/title/${item.type}/${item.id}`} className="btn lg glass"><Info size={17} />More info</Link>
       </Hero>
     </div>
@@ -235,7 +243,9 @@ export function Discover() {
   const { data, error, reload } = useAsync(() => api.home(), []);
   const resume = useAsync(() => api.continueWatching().catch(() => ({ items: [] as WatchProgress[] })), []);
   const downloads = useAsync(() => api.downloads(), []);
-  usePolling(() => { api.downloads().then(downloads.setData, () => undefined); }, 2000);
+  // Every 2 seconds while something downloads, otherwise every 15.
+  const busy = (downloads.data?.jobs ?? []).some((job) => ['queued', 'torbox', 'downloading'].includes(job.status));
+  usePolling(() => { api.downloads().then(downloads.setData, () => undefined); }, busy ? 2000 : 15_000);
   return (
     <div className="canvas home">
       <h1 className="sr-only">Home</h1>

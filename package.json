@@ -1,8 +1,8 @@
 {
   "name": "haul",
   "productName": "Haul",
-  "version": "1.6.0",
-  "description": "All-in-one TorBox media downloader: browse, pick a season pack or a whole season, and Haul downloads, renames and hosts it for Nuvio and Stremio.",
+  "version": "1.7.0",
+  "description": "Haul, a TorBox player: stream films and shows from TorBox in your browser, or download whole seasons to your server, renamed for Plex, Jellyfin and Nuvio.",
   "author": "Squipy411",
   "license": "MIT",
   "private": true,

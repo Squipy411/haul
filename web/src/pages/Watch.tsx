@@ -2,7 +2,7 @@ import { Check, ChevronLeft, Languages, ListVideo, X, Maximize, Minimize, Pause,
 import { DropdownMenu } from 'radix-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaType, PlayCaps, PlaySession, WatchProgress } from '../../../shared/types';
-import { api } from '../api';
+import { api, preparePlay } from '../api';
 import { useAsync, useRouter, useToast } from '../lib';
 
 type HlsInstance = { destroy: () => void; loadSource: (url: string) => void; attachMedia: (media: HTMLMediaElement) => void; on: (event: string, handler: (event: string, data: any) => void) => void; startLoad: (at?: number) => void; recoverMediaError: () => void };
@@ -100,6 +100,9 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
   const [session, setSession] = useState<PlaySession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // The title's artwork shows while the stream gets ready, instead of a black screen.
+  const meta = useAsync(() => api.meta(type, id).catch(() => null), [type, id]);
+  const still = type === 'series' ? meta.data?.episodes.find((entry) => entry.season === season && entry.episode === episode)?.thumbnail ?? meta.data?.background : meta.data?.background;
   const leave = useCallback(() => navigate(`/title/${type}/${id}${season !== undefined ? `?season=${season}` : ''}`), [navigate, type, id, season]);
 
   useEffect(() => {
@@ -114,8 +117,15 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
   if (error || !session) {
     return (
       <div className="player waiting">
+        {still && !error && <img className="player-still" src={still} alt="" />}
         <div className="player-top visible">
           <button className="player-icon" onClick={leave} aria-label="Back"><ChevronLeft size={24} /></button>
+          {meta.data && (
+            <div className="player-title">
+              <b className="truncate">{meta.data.name}</b>
+              {season !== undefined && <span className="truncate">S{String(season).padStart(2, '0')}E{String(episode).padStart(2, '0')}</span>}{/* taste-skill-ignore: episode code */}
+            </div>
+          )}
         </div>
         <div className="player-message">
           {error ? (
@@ -211,7 +221,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
             errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
           }
         };
-        const hls = new Hls({ startPosition: seekTo, maxBufferLength: 60, backBufferLength: 90, enableWorker: true, fragLoadPolicy: patient, playlistLoadPolicy: patient, manifestLoadPolicy: patient } as any) as unknown as HlsInstance;
+        // startFragPrefetch fetches the first piece while the player is still being set up.
+        const hls = new Hls({ startPosition: seekTo, startFragPrefetch: true, testBandwidth: false, maxBufferLength: 60, backBufferLength: 90, enableWorker: true, fragLoadPolicy: patient, playlistLoadPolicy: patient, manifestLoadPolicy: patient } as any) as unknown as HlsInstance;
         hlsRef.current = hls;
         let recovered = 0;
         hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -415,6 +426,11 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const activeCues = useMemo(() => cues.filter((cue) => time >= cue.start && time <= cue.end), [cues, time]);
   const inIntro = session.intro && time >= session.intro.start && time < session.intro.end - 2;
   const nearEnd = session.next && duration > 0 && duration - time < 35 && !upNextDismissed;
+  // Have the next episode ready by the time this one ends.
+  const nextSoon = Boolean(session.next && duration > 0 && duration - time < 120);
+  useEffect(() => {
+    if (nextSoon && session.next) preparePlay({ type: 'series', imdbId: session.imdbId, season: session.next.season, episode: session.next.episode }, true);
+  }, [nextSoon, session.imdbId, session.next]);
   const progressPct = duration ? Math.min(100, (time / duration) * 100) : 0;
   const bufferedPct = duration ? Math.min(100, (buffered / duration) * 100) : 0;
   const onBar = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -434,6 +450,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       <video
         ref={video}
         playsInline
+        poster={session.background}
         onClick={togglePlay}
         onDoubleClick={toggleFullscreen}
         onPlay={() => { setPlaying(true); reveal(); }}

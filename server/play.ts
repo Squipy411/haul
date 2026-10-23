@@ -7,7 +7,7 @@ import { type Context, HttpError, type Router, sendFile } from './http.js';
 import type { Library } from './library.js';
 import { type Caps, HlsJobs, type MediaTools, type Probe, chooseMode, defaultAudio, srtToVtt, trackLabel, videoPlays } from './media.js';
 import { type ProgressStore, isFinished, progressKey } from './progress.js';
-import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, parseEpisodeFile } from './release.js';
+import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile } from './release.js';
 import type { SearchService } from './search.js';
 import { type Torbox, TorboxError, type TorboxStream, type TorboxTorrent, magnetFor } from './torbox.js';
 
@@ -22,6 +22,18 @@ interface Deps {
 }
 
 const pad = (value: number) => String(value).padStart(2, '0');
+
+/**
+ * For playing without asking: 0 an English (or untagged) release, 1 one with several languages,
+ * 2 dubbed only. A multi-language release often starts on the dub, so it comes second.
+ */
+export function languageTier(info: Release['info']): number {
+  const languages = info.languages.filter((language) => language !== 'EN');
+  if (!languages.length) return 0;
+  return isForeignOnly(info) ? 2 : 1;
+}
+
+const ENGLISH = new Set(['eng', 'en', 'english']);
 const HOUR = 3_600_000;
 
 /** "0:22:22.078000" → 1342.078 */
@@ -89,22 +101,111 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     return files.sort((a, b) => b.size - a.size)[0];
   };
 
-  /** The torrent in the TorBox list, adding it (cached ones are ready at once) if it isn't there. */
-  const torrentFor = async (release: Release): Promise<TorboxTorrent> => {
-    const find = (list: TorboxTorrent[]) => list.find((torrent) => torrent.hash?.toLowerCase() === release.hash || torrent.alternative_hashes?.some((hash) => hash.toLowerCase() === release.hash));
-    const ready = (torrent?: TorboxTorrent) => Boolean(torrent && torrent.files?.length && (torrent.download_present || torrent.download_finished));
-    let torrent = find(await torbox.list());
+  // --- TorBox lookups, cached so pressing play costs as few round trips as possible ---
+  let torrentList: { at: number; value: Promise<TorboxTorrent[]> } | null = null;
+  /** The TorBox list, at most a minute old unless `fresh`. */
+  const torrents = (fresh = false): Promise<TorboxTorrent[]> => {
+    if (!fresh && torrentList && Date.now() - torrentList.at < 60_000) return torrentList.value;
+    const value = torbox.list();
+    torrentList = { at: Date.now(), value };
+    value.catch(() => { if (torrentList?.value === value) torrentList = null; });
+    return value;
+  };
+  const findTorrent = (list: TorboxTorrent[], hash: string) => list.find((torrent) => torrent.hash?.toLowerCase() === hash || torrent.alternative_hashes?.some((value) => value.toLowerCase() === hash));
+  const isReady = (torrent?: TorboxTorrent) => Boolean(torrent && torrent.files?.length && (torrent.download_present || torrent.download_finished));
+
+  /** The torrent in the TorBox list, adding it (cached ones are ready at once) if it isn't there and `add` allows. */
+  const torrentFor = async (pick: { hash: string; name: string; cached: boolean }, add = true): Promise<TorboxTorrent> => {
+    let torrent = findTorrent(await torrents(), pick.hash);
+    // The cached list may predate it, or predate it finishing.
+    if (!torrent) torrent = findTorrent(await torrents(true), pick.hash);
+    let id = torrent?.id;
     if (!torrent) {
-      if (!release.cached) throw new HttpError(409, "TorBox doesn't have this version yet. Download it, or pick one marked Ready now.");
-      await torbox.create(magnetFor(release.hash, release.name), release.name);
+      if (!add) throw new HttpError(409, 'Not in the TorBox list');
+      if (!pick.cached) throw new HttpError(409, "TorBox doesn't have this version yet. Download it, or pick one marked Ready now.");
+      id = (await torbox.create(magnetFor(pick.hash, pick.name), pick.name)).torrentId;
+      torrentList = null;
     }
-    for (let waited = 0; !ready(torrent) && waited < 30_000; waited += 1500) {
+    // Waiting for it to be ready: one torrent by id is several times quicker than the whole list.
+    for (let waited = 0; !isReady(torrent) && waited < 30_000; waited += 600) {
       if (torrent && /error|failed/i.test(torrent.download_state)) throw new HttpError(502, `TorBox reported: ${torrent.download_state}`);
-      await new Promise((resolve) => setTimeout(resolve, torrent ? 1500 : 800));
-      torrent = find(await torbox.list());
+      if (torrent || id !== undefined) await new Promise((resolve) => setTimeout(resolve, 600));
+      torrent = id !== undefined ? await torbox.torrent(id).catch(() => undefined) : findTorrent(await torrents(true), pick.hash);
     }
-    if (!torrent || !ready(torrent)) throw new HttpError(504, 'TorBox is still preparing this torrent. Try again in a moment.');
+    if (!torrent || !isReady(torrent)) throw new HttpError(504, 'TorBox is still preparing this torrent. Try again in a moment.');
     return torrent;
+  };
+
+  /** Streams TorBox made in the last hour, reused for the same file and tracks instead of asking again. */
+  const streamCache = new Map<string, { at: number; value: Promise<TorboxStream> }>();
+  const streamFor = (torrentId: number, fileId: number, audio = 0, subtitle: number | null = null, fresh = false): Promise<TorboxStream> => {
+    const key = `${torrentId}:${fileId}:${audio}:${subtitle}`;
+    for (const [entry, value] of streamCache) if (Date.now() - value.at > HOUR) streamCache.delete(entry);
+    const hit = streamCache.get(key);
+    if (hit && !fresh) return hit.value;
+    const value = torbox.createStream(torrentId, fileId, { audio, subtitle });
+    streamCache.set(key, { at: Date.now(), value });
+    value.catch(() => { if (streamCache.get(key)?.value === value) streamCache.delete(key); });
+    return value;
+  };
+
+  /** TorBox playlists, kept once fetched: a finished (VOD) playlist never changes for its stream. */
+  const playlists = new Map<string, { at: number; value: Promise<string> }>();
+  const playlistText = (url: string): Promise<string> => {
+    for (const [entry, value] of playlists) if (Date.now() - value.at > HOUR) playlists.delete(entry);
+    const hit = playlists.get(url);
+    if (hit) return hit.value;
+    const value = (async () => {
+      let response: Response | undefined;
+      // A file TorBox hasn't converted before can take a moment to get its playlist.
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        response = await fetch(url, { signal: AbortSignal.timeout(20_000) }).catch(() => undefined);
+        if (response?.ok) break;
+        // Expired or refused: retrying won't help, the caller makes a new stream.
+        if (response && [401, 403, 410].includes(response.status)) break;
+        await response?.body?.cancel();
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      if (!response?.ok) throw new HttpError(502, `TorBox's stream didn't answer (${response?.status ?? 'no response'}).`);
+      const text = await response.text();
+      if (!/#EXT-X-(ENDLIST|PLAYLIST-TYPE:VOD)/.test(text)) playlists.delete(url);
+      return text;
+    })();
+    playlists.set(url, { at: Date.now(), value });
+    value.catch(() => { if (playlists.get(url)?.value === value) playlists.delete(url); });
+    return value;
+  };
+
+  /** Asks TorBox for the start of one segment, so it converts it before the player wants it. */
+  const touch = (url: string) => {
+    void fetch(url, { headers: { Range: 'bytes=0-65535' }, signal: AbortSignal.timeout(30_000) })
+      .then((response) => response.body?.cancel())
+      .catch(() => undefined);
+  };
+
+  /**
+   * Starts TorBox working before the browser asks: the playlist, and the segment playback begins in.
+   * TorBox names segments video1.ts, video2.ts… of about 5 seconds, so that one is asked for at once;
+   * the playlist then confirms the real name (a wrong guess costs nothing).
+   */
+  const warmStream = (upstream: string, start = 0) => {
+    const guess = new URL(`video${Math.floor(start / 5) + 1}.ts`, upstream);
+    touch(guess.toString());
+    void playlistText(upstream).then((text) => {
+      let elapsed = 0;
+      let pending: number | null = null;
+      for (const line of text.split(/\r?\n/)) {
+        if (line.startsWith('#EXTINF:')) { pending = Number.parseFloat(line.slice(8)) || 0; continue; }
+        if (!line || line.startsWith('#') || pending === null) continue;
+        if (elapsed + pending > start) {
+          const actual = new URL(line.trim(), upstream).toString();
+          if (actual !== guess.toString()) touch(actual);
+          return;
+        }
+        elapsed += pending;
+        pending = null;
+      }
+    }).catch(() => undefined);
   };
 
   const pickFile = (torrent: TorboxTorrent, type: MediaType, season?: number, episode?: number) => {
@@ -126,9 +227,57 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
   const bestCached = async (type: MediaType, imdbId: string, season?: number, episode?: number): Promise<Release> => {
     const releases = type === 'movie' ? await deps.search.movie(imdbId) : await deps.search.episode(imdbId, season!, episode!);
     const ready = releases.filter((release) => release.cached && release.score > 0 && !release.info.lowQuality);
-    const best = ready.find((release) => release.kind === 'movie' || release.kind === 'episode') ?? ready[0];
+    // English releases first, dubs last; within a tier, a single file before a pack, then the usual order.
+    const single = (release: Release) => (release.kind === 'movie' || release.kind === 'episode' ? 0 : 1);
+    const best = ready.map((release, order) => ({ release, order }))
+      .sort((a, b) => languageTier(a.release.info) - languageTier(b.release.info) || single(a.release) - single(b.release) || a.order - b.order)[0]?.release;
     if (!best) throw new HttpError(404, 'Nothing is ready on TorBox for this one yet. Download it, or check back later.');
     return best;
+  };
+
+  /**
+   * The release, torrent, file and stream for one title. A version already in the TorBox list needs no
+   * search at all; otherwise the best version TorBox has cached is found and added.
+   */
+  const resolveTorbox = async (type: MediaType, imdbId: string, season?: number, episode?: number, hash?: string, add = true) => {
+    let pick: { hash: string; name: string; cached: boolean };
+    if (hash) {
+      const listed = findTorrent(await torrents(), hash);
+      if (listed) pick = { hash, name: listed.name, cached: true };
+      else {
+        const releases = type === 'movie' ? await deps.search.movie(imdbId) : await deps.search.episode(imdbId, season!, episode!);
+        const pool = [...releases, ...(type === 'series' ? await deps.search.seasonPacks(imdbId, season!, episode!, 1).catch(() => [] as Release[]) : [])];
+        const found = pool.find((item) => item.hash === hash);
+        if (!found) throw new HttpError(404, 'That version is no longer listed. Pick another.');
+        pick = found;
+      }
+    } else {
+      // A good version already in the TorBox list beats a better one TorBox would have to add.
+      const [list, releases, packs] = await Promise.all([
+        torrents(),
+        type === 'movie' ? deps.search.movie(imdbId) : deps.search.episode(imdbId, season!, episode!),
+        type === 'series' ? deps.search.seasonPacks(imdbId, season!, episode!, 1).catch(() => [] as Release[]) : Promise.resolve([] as Release[])
+      ]);
+      const usable = (release: Release) => release.score > 0 && !release.info.lowQuality && !isForeignOnly(release.info);
+      const owned = [...releases, ...packs].filter((release) => usable(release) && isReady(findTorrent(list, release.hash)))
+        .sort((a, b) => languageTier(a.info) - languageTier(b.info));
+      pick = owned[0] ?? await bestCached(type, imdbId, season, episode);
+    }
+    const torrent = await torrentFor(pick, add);
+    const target = pickFile(torrent, type, season, episode);
+    if (!target) throw new HttpError(404, `This torrent has no file for S${pad(season!)}E${pad(episode!)}.`);
+    let stream = await streamFor(torrent.id, target.id).catch((error: Error) => {
+      throw new HttpError(502, error instanceof TorboxError && /plan|pro|subscri/i.test(error.message) ? 'Streaming from TorBox needs a TorBox Pro plan.' : `TorBox couldn't start the stream: ${error.message}`);
+    });
+    // A release whose first track is a dub but which carries English starts in English.
+    const audios = stream.metadata?.audios ?? [];
+    const english = audios.findIndex((track) => ENGLISH.has(String(track.language ?? '').toLowerCase()));
+    let audio = 0;
+    if (english > 0 && !ENGLISH.has(String(audios[0]?.language ?? '').toLowerCase())) {
+      const switched = await streamFor(torrent.id, target.id, english).catch(() => null);
+      if (switched) { stream = switched; audio = english; }
+    }
+    return { name: pick.name, torrent, target, stream, audio };
   };
 
   const torboxSubtitles = (stream: TorboxStream): PlaySubtitle[] => (stream.metadata?.subtitles ?? []).map((entry, position) => ({
@@ -145,7 +294,14 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     const episode = type === 'series' ? Number(body.episode) : undefined;
     if (type === 'series' && (!Number.isInteger(season) || !Number.isInteger(episode))) throw new HttpError(400, 'Which episode?');
     const caps = capsFrom(body.caps);
-    const meta = await deps.catalog.meta(type, imdbId);
+    const hash = body.hash ? String(body.hash).toLowerCase() : undefined;
+    const file = body.source === 'torbox' || hash ? undefined : localFile(type, imdbId, season, episode);
+    const local = Boolean(file && fs.existsSync(file.path));
+    // The title's details and the TorBox side are fetched at the same time.
+    const metaLoad = deps.catalog.meta(type, imdbId);
+    const torboxLoad = local ? null : torbox.configured ? resolveTorbox(type, imdbId, season, episode, hash) : null;
+    torboxLoad?.catch(() => undefined);
+    const meta = await metaLoad;
     const entry = type === 'series' ? meta.episodes.find((item) => item.season === season && item.episode === episode) : undefined;
     const key = progressKey(type, imdbId, season, episode);
     const base = {
@@ -158,8 +314,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       next: type === 'series' ? nextEpisode(meta, season!, episode!) : undefined
     };
 
-    const file = body.source === 'torbox' || body.hash ? undefined : localFile(type, imdbId, season, episode);
-    if (file && fs.existsSync(file.path)) {
+    if (file && local) {
       const canConvert = await media.hasFfmpeg();
       const probe = canConvert ? await media.probe(file.path).catch(() => null) : null;
       const audio = probe ? defaultAudio(probe) : 0;
@@ -185,24 +340,10 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       return ctx.json(200, session);
     }
 
-    if (!torbox.configured) throw new HttpError(400, 'Add your TorBox API key in Settings to stream.');
-    let release: Release;
-    if (body.hash) {
-      const releases = type === 'movie' ? await deps.search.movie(imdbId) : await deps.search.episode(imdbId, season!, episode!);
-      const pool = [...releases, ...(type === 'series' ? await deps.search.seasonPacks(imdbId, season!, episode!, 1).catch(() => [] as Release[]) : [])];
-      const found = pool.find((item) => item.hash === String(body.hash).toLowerCase());
-      if (!found) throw new HttpError(404, 'That version is no longer listed. Pick another.');
-      release = found;
-    } else {
-      release = await bestCached(type, imdbId, season, episode);
-    }
-    const torrent = await torrentFor(release);
-    const target = pickFile(torrent, type, season, episode);
-    if (!target) throw new HttpError(404, `This torrent has no file for S${pad(season!)}E${pad(episode!)}.`);
-    const stream = await torbox.createStream(torrent.id, target.id).catch((error: Error) => {
-      throw new HttpError(502, error instanceof TorboxError && /plan|pro|subscri/i.test(error.message) ? 'Streaming from TorBox needs a TorBox Pro plan.' : `TorBox couldn't start the stream: ${error.message}`);
-    });
-    const id = remember({ kind: 'torbox', torrentId: torrent.id, fileId: target.id, upstream: stream.hls_url, audio: 0, subtitle: null, at: Date.now() });
+    if (!torboxLoad) throw new HttpError(400, 'Add your TorBox API key in Settings to stream.');
+    const { name, torrent, target, stream, audio } = await torboxLoad;
+    warmStream(stream.hls_url, base.resume ?? 0);
+    const id = remember({ kind: 'torbox', torrentId: torrent.id, fileId: target.id, upstream: stream.hls_url, audio, subtitle: null, at: Date.now() });
     const intro = stream.intro_information;
     const session: PlaySession = {
       ...base,
@@ -211,13 +352,38 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       mode: 'hls',
       duration: clockSeconds(stream.metadata?.video?.duration),
       audios: (stream.metadata?.audios ?? []).map((track, position) => ({ index: position, label: trackLabel({ index: position, language: track.language, title: track.title ?? undefined, channels: track.channels }, 'audio') })),
-      audio: 0,
+      audio,
       subtitles: torboxSubtitles(stream),
       intro: intro && Number(intro.end_time) > 10 ? { start: Number(intro.start_time) || 0, end: Number(intro.end_time) } : undefined,
-      source: release.name,
+      source: name,
       stream: id
     };
     ctx.json(200, session);
+  });
+
+  /**
+   * Warms up what pressing play needs: the search and the TorBox list when a title opens, and the stream
+   * itself (only for versions already in the TorBox list, so nothing is added) when the pointer is on Play.
+   */
+  const prepared = new Map<string, number>();
+  router.post('/api/play/prepare', async (ctx) => {
+    const body = await ctx.body();
+    const type: MediaType = body.type === 'series' ? 'series' : 'movie';
+    const imdbId = String(body.imdbId ?? '');
+    const season = type === 'series' ? Number(body.season) : undefined;
+    const episode = type === 'series' ? Number(body.episode) : undefined;
+    if (!/^tt\d+$/.test(imdbId) || (type === 'series' && (!Number.isInteger(season) || !Number.isInteger(episode)))) throw new HttpError(400, 'Unknown title');
+    const key = `${progressKey(type, imdbId, season, episode)}:${body.stream ? 'stream' : 'search'}`;
+    for (const [entry, at] of prepared) if (Date.now() - at > 10 * 60_000) prepared.delete(entry);
+    if (Date.now() - (prepared.get(key) ?? 0) > 60_000 && torbox.configured && !localFile(type, imdbId, season, episode)) {
+      prepared.set(key, Date.now());
+      // resolveTorbox warms the list and the search on its way; it stops short of adding a torrent.
+      const work = body.stream
+        ? resolveTorbox(type, imdbId, season, episode, undefined, false).then((found) => warmStream(found.stream.hls_url, progress.resumeAt(progressKey(type, imdbId, season, episode)) ?? 0))
+        : Promise.all([torrents(), deps.catalog.meta(type, imdbId), bestCached(type, imdbId, season, episode)]);
+      work.catch(() => undefined);
+    }
+    ctx.json(200, { ok: true });
   });
 
   // --- Your files ---------------------------------------------------------------
@@ -263,23 +429,23 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
 
   // --- From TorBox ----------------------------------------------------------------
   const sendPlaylist = async (ctx: Context, id: string, url: string) => {
-    let response: Response | undefined;
-    // A file TorBox hasn't converted before can take a moment to get its playlist.
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      response = await fetch(url, { signal: AbortSignal.timeout(20_000) }).catch(() => undefined);
-      if (response?.ok) break;
-      await response?.body?.cancel();
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
-    if (!response?.ok) throw new HttpError(502, `TorBox's stream didn't answer (${response?.status ?? 'no response'}).`);
-    const text = rewritePlaylist(await response.text(), url, deps.apiKey(), (absolute) => `/api/play/torbox/${id}/variant.m3u8?u=${encodeURIComponent(absolute)}`);
+    const text = rewritePlaylist(await playlistText(url), url, deps.apiKey(), (absolute) => `/api/play/torbox/${id}/variant.m3u8?u=${encodeURIComponent(absolute)}`);
     ctx.res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
     ctx.res.end(text);
   };
 
   router.get('/api/play/torbox/:id/playlist.m3u8', async (ctx) => {
     const session = sessionOf(ctx.params.id!, 'torbox');
-    await sendPlaylist(ctx, ctx.params.id!, session.upstream);
+    try {
+      await sendPlaylist(ctx, ctx.params.id!, session.upstream);
+    } catch (error) {
+      // A reused stream may have expired on TorBox's side: make a new one and try once more.
+      playlists.delete(session.upstream);
+      const stream = await streamFor(session.torrentId, session.fileId, session.audio, session.subtitle, true).catch(() => null);
+      if (!stream) throw error;
+      session.upstream = stream.hls_url;
+      await sendPlaylist(ctx, ctx.params.id!, session.upstream);
+    }
   });
 
   router.get('/api/play/torbox/:id/variant.m3u8', async (ctx) => {
@@ -299,7 +465,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     const body = await ctx.body();
     const audio = Number.isInteger(body.audio) ? Number(body.audio) : session.audio;
     const subtitle = body.subtitle === null ? null : Number.isInteger(body.subtitle) ? Number(body.subtitle) : session.subtitle;
-    const stream = await torbox.createStream(session.torrentId, session.fileId, { audio, subtitle }).catch((error: Error) => {
+    const stream = await streamFor(session.torrentId, session.fileId, audio, subtitle).catch((error: Error) => {
       throw new HttpError(502, `TorBox couldn't switch tracks: ${error.message}`);
     });
     Object.assign(session, { upstream: stream.hls_url, audio, subtitle });

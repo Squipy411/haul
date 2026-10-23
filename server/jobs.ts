@@ -318,7 +318,15 @@ export class JobManager {
   private async pollTorbox(): Promise<void> {
     let list: TorboxTorrent[];
     try {
-      list = await this.torrents(0);
+      // A few known torrents are quicker to ask about one by one than reading a list of thousands.
+      const waiting = this.jobs.filter((job) => job.status === 'torbox');
+      if (waiting.length && waiting.length <= 8 && waiting.every((job) => job.torbox.id !== undefined)) {
+        // Any trouble (a deleted torrent may answer with an error) falls back to the full list, which handles it.
+        list = await Promise.all(waiting.map((job) => this.deps.torbox.torrent(job.torbox.id!)))
+          .then((found) => (found.every(Boolean) ? found as TorboxTorrent[] : this.torrents(0)), () => this.torrents(0));
+      } else {
+        list = await this.torrents(0);
+      }
     } catch (error) {
       for (const job of this.jobs) if (job.status === 'torbox') job.note = (error as Error).message;
       return;

@@ -1,7 +1,7 @@
 import { Check, Download, Play } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Episode, Job, MediaType, Meta, Release, SeasonPlan, WatchProgress } from '../../../shared/types';
-import { api } from '../api';
+import { api, preparePlay } from '../api';
 import { FollowControl } from '../components/Follow';
 import { Hero } from '../components/Hero';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
@@ -35,7 +35,8 @@ function useDownloader(meta: Meta) {
 /** Progress (0–1) of each episode that is on its way, from the download queue. */
 function useIncoming(imdbId: string, season?: number) {
   const { data, setData } = useAsync(() => api.downloads(), []);
-  usePolling(() => { api.downloads().then(setData, () => undefined); }, 2000);
+  const busy = (data?.jobs ?? []).some((job) => job.imdbId === imdbId && ['queued', 'torbox', 'downloading'].includes(job.status));
+  usePolling(() => { api.downloads().then(setData, () => undefined); }, busy ? 2000 : 15_000);
   return useMemo(() => {
     const incoming = new Map<number, number>();
     for (const job of (data?.jobs ?? []) as Job[]) {
@@ -270,7 +271,7 @@ function EpisodeRow({ meta, episode, incoming, progress, open, onOpen }: {
   return (
     <div className={`episode ${open ? 'open' : ''} ${isAired ? '' : 'unaired'}`} id={`episode-${episode.episode}`}>
       {isAired ? (
-        <Link to={watch} className="episode-still" aria-label={`${started ? 'Resume' : 'Play'} episode ${episode.episode}, ${episode.title}`}>
+        <Link to={watch} className="episode-still" onPointerEnter={() => { if (!episode.owned) preparePlay({ type: 'series', imdbId: meta.id, season: episode.season, episode: episode.episode }, true); }} aria-label={`${started ? 'Resume' : 'Play'} episode ${episode.episode}, ${episode.title}`}>
           {still}
           <span className="play-badge"><Play size={18} fill="currentColor" /></span>
           {started && <i className="watched" aria-hidden="true"><b style={{ width: `${Math.min(100, (progress!.position / progress!.duration) * 100)}%` }} /></i>}
@@ -485,13 +486,18 @@ function MovieView({ meta }: { meta: Meta }) {
 function PlayButton({ meta, resume }: { meta: Meta; resume?: WatchProgress }) {
   const first = meta.episodes.filter((episode) => episode.season > 0 && aired(episode)).sort((a, b) => a.season - b.season || a.episode - b.episode)[0];
   const target = meta.type === 'series' ? (resume ? { season: resume.season!, episode: resume.episode! } : first) : undefined;
+  const play = { type: meta.type, imdbId: meta.id, season: target?.season, episode: target?.episode };
+  // Opening the page gets the stream going at TorBox (which takes a few seconds to convert the first
+  // part), so Play is usually instant by the time it's pressed. Only versions already in the TorBox list.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!meta.ownedMovie && (meta.type === 'movie' || target)) preparePlay(play, true); }, [meta.id, target?.season, target?.episode]);
   if (meta.type === 'series' && !target) return null;
   const code = target ? `S${String(target.season).padStart(2, '0')}E${String(target.episode).padStart(2, '0')}` : ''; // taste-skill-ignore: episode code
   const resuming = resume && !resume.upNext && resume.position > 30;
   const label = resuming ? `Resume${code ? ` ${code}` : ''}` : `Play${code ? ` ${code}` : ''}`;
   const to = meta.type === 'series' ? `/watch/series/${meta.id}?s=${target!.season}&e=${target!.episode}` : `/watch/movie/${meta.id}`;
   return (
-    <Link to={to} className="btn primary lg">
+    <Link to={to} className="btn primary lg" onPointerEnter={() => preparePlay(play, true)} onFocus={() => preparePlay(play, true)} onPointerDown={() => preparePlay(play, true)}>
       <Play size={17} fill="currentColor" />{label}
       {resuming && resume.duration > 0 && <span className="btn-meta">{minutesLeft(resume)} min left</span>}
     </Link>
