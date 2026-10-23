@@ -210,6 +210,11 @@ export function airDate(value?: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/** "1 show", "3 shows". */
+export function count(value: number, word: string, plural = `${word}s`): string {
+  return `${value} ${value === 1 ? word : plural}`;
+}
+
 export function pad(value: number): string {
   // Episode codes such as S01E04, not list numbering. taste-skill-ignore
   return String(value).padStart(2, '0');

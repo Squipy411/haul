@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { LibrarySummary, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Loading, Poster, Sheet, TabBar } from '../components/ui';
-import { Link, ago, bytes, copyText, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
+import { Link, ago, bytes, copyText, count, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
 
 function AddonCard() {
   const toast = useToast();
@@ -29,13 +29,21 @@ function MatchSheet({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
   const toast = useToast();
   const [query, setQuery] = useState(item.title);
   const [results, setResults] = useState<MetaPreview[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    if (query.trim().length < 2) return;
+    if (query.trim().length < 2) { setResults([]); setLoading(false); return; }
     let alive = true;
+    // Shown as searching straight away, so "Nothing found" never flashes while typing.
+    setLoading(true);
     const timer = setTimeout(async () => {
-      setLoading(true);
       try {
+        // An IMDb link or id (tt…) finds the exact title, for ones the search doesn't know by name.
+        const id = /tt\d{5,}/.exec(query)?.[0];
+        if (id) {
+          const meta = await api.meta(item.type, id);
+          if (alive) setResults([{ id: meta.id, type: meta.type, name: meta.name, poster: meta.poster, releaseInfo: meta.releaseInfo }]);
+          return;
+        }
         const found = await api.search(query.trim());
         if (alive) setResults(item.type === 'series' ? found.series : found.movies);
       } catch {
@@ -66,6 +74,9 @@ function MatchSheet({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
     >
       <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus style={{ marginBottom: 18 }} aria-label="Search for the title" />
       {loading && <Loading text="Searching…" />}
+      {!loading && !results.length && query.trim().length >= 2 && (
+        <Empty title={`Nothing found for “${query.trim()}”`}>Try the name as IMDb spells it, or paste the title's IMDb link.</Empty>
+      )}
       <div className="grid">
         {results.map((result) => (
           <button key={result.id} className="poster-card" style={{ background: 'none', border: 0, padding: 0, textAlign: 'left' }} onClick={() => choose(result.id)}>
@@ -100,7 +111,7 @@ export function LibraryPage() {
       <div className="title-row">
         <div>
           <h1>My library</h1>
-          {data && <div className="sub num">{shows.length} shows · {movies.length} movies · {bytes(all.reduce((sum, item) => sum + item.size, 0))} · checked {ago(data.scannedAt)}</div>}
+          {data && <div className="sub num">{count(shows.length, 'show')} · {count(movies.length, 'movie')} · {bytes(all.reduce((sum, item) => sum + item.size, 0))} · checked {ago(data.scannedAt)}</div>}
         </div>
         <button className="btn" disabled={data?.scanning} onClick={async () => { await api.scanLibrary(); toast('Checking your folders for new files'); setTimeout(reload, 1200); }}>
           {data?.scanning ? <><span className="spinner" />Checking</> : 'Check folders'}
@@ -113,7 +124,7 @@ export function LibraryPage() {
           <TabBar value={tab} onChange={setTab} tabs={[{ value: 'series', label: 'Shows', count: shows.length }, { value: 'movie', label: 'Movies', count: movies.length }]} />
           <div className="toolbar">
             <input className="input filter" placeholder={`Filter ${tab === 'series' ? 'shows' : 'movies'}`} value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter the library" />
-            <span className="count">{unmatched > 0 ? `${unmatched} need a match · ` : ''}{items.length} {tab === 'series' ? 'shows' : 'movies'}</span>
+            <span className="count">{unmatched > 0 ? `${unmatched} need${unmatched === 1 ? 's' : ''} a match · ` : ''}{count(items.length, tab === 'series' ? 'show' : 'movie')}</span>
           </div>
           {!items.length && (
             <Empty title={query ? 'Nothing matches' : `No ${tab === 'series' ? 'shows' : 'movies'} yet`}>

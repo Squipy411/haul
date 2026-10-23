@@ -106,7 +106,10 @@ export class Torbox {
       const user = await this.call<{ email?: string; plan?: number; premium_expires_at?: string | null }>('/user/me', {}, keyOverride);
       return { ok: true, email: user.email, plan: PLANS[user.plan ?? -1] ?? `Plan ${user.plan}`, expires: user.premium_expires_at ?? null };
     } catch (error) {
-      return { ok: false, error: (error as Error).message };
+      const failure = error as TorboxError;
+      // TorBox's own wording ("log in again or reset your token") is about its website, not Haul.
+      const refused = failure.status === 401 || failure.status === 403 || /token|auth|api key/i.test(`${failure.code ?? ''} ${failure.message}`);
+      return { ok: false, error: refused ? "TorBox didn't accept that API key. Copy it again from torbox.app/settings, under API key, and paste it here." : failure.message };
     }
   }
 

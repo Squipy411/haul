@@ -366,6 +366,9 @@ export interface LibraryItem {
   matchSource?: 'haul' | 'folder' | 'search' | 'manual';
   title: string;
   year?: number;
+  /** The name and year read from the folder, shown again if the match is removed. */
+  folderTitle?: string;
+  folderYear?: number;
   poster?: string;
   background?: string;
   folder: string;

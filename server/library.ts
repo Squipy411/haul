@@ -161,6 +161,8 @@ export class Library {
         type,
         title,
         year,
+        folderTitle: title,
+        folderYear: year,
         folder,
         addedAt: Math.max(...files.map((file) => file.addedAt)),
         files
@@ -215,13 +217,16 @@ export class Library {
 
   private applyMatches(): void {
     for (const item of this.items) {
+      // Items saved by older versions don't have the folder's own name until the next scan.
+      item.folderTitle ??= item.title;
+      item.folderYear ??= item.year;
       const fromFolder = /(?:imdb[-=]?|\[|\{)?(tt\d{6,10})/i.exec(path.basename(item.key.replace(/^[a-z]+:/, '')))?.[1];
       const record = this.file.data.matches[item.key];
       const imdbId = fromFolder ?? record?.imdbId ?? undefined;
       item.imdbId = imdbId || undefined;
       item.matchSource = fromFolder ? 'folder' : record?.imdbId ? record.source : undefined;
-      if (record?.title) item.title = record.title;
-      if (record?.year) item.year = record.year;
+      item.title = record?.imdbId && record.title ? record.title : item.folderTitle;
+      item.year = record?.imdbId && record.year ? record.year : item.folderYear;
       item.poster = item.imdbId ? posterFor(item.imdbId) : undefined;
       item.background = item.imdbId ? backgroundFor(item.imdbId) : undefined;
     }

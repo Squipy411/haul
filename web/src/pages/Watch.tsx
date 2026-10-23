@@ -196,7 +196,20 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   /** Last known position, kept outside the video element so it can be saved after it's gone. */
   const position = useRef(session.resume ?? 0);
 
-  const absolute = useCallback(() => (video.current ? offset + video.current.currentTime : position.current), [offset]);
+  // While a source is (re)loading the element reads 0, so the last known position stands in.
+  const absolute = useCallback(() => (video.current && video.current.readyState >= 1 ? offset + video.current.currentTime : position.current), [offset]);
+
+  /** Starts the source again from where it was. */
+  const retry = useCallback(() => { startAt.current = absolute(); setFailure(null); setReload((value) => value + 1); }, [absolute]);
+  // A stream that breaks or stalls is restarted once on its own (at most once a minute) before the
+  // message shows; one that played fine before then has earned another go.
+  const everPlayed = useRef(false);
+  const lastAutoRetry = useRef(0);
+  const fail = useRef<(message: string) => void>(() => undefined);
+  fail.current = (message: string) => {
+    if (everPlayed.current && Date.now() - lastAutoRetry.current > 60_000) { lastAutoRetry.current = Date.now(); retry(); return; }
+    setFailure(message);
+  };
   usePageTitle(session.subtitle ? `${session.title} ${session.subtitle.split(' · ')[0]}` : session.title);
 
   // Attach the source: a file, an HLS playlist through hls.js, or the browser's own HLS (Safari).
@@ -240,7 +253,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           if (!data?.fatal) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR && recovered < 3) { recovered += 1; hls.startLoad(); return; }
           if (data.type === Hls.ErrorTypes.MEDIA_ERROR && recovered < 3) { recovered += 1; hls.recoverMediaError(); return; }
-          setFailure(data.response?.code === 500 || data.response?.code === 502 ? 'The stream stopped. Try again, or pick another version.' : 'The stream stopped loading.');
+          fail.current(data.response?.code === 500 || data.response?.code === 502 ? 'The stream stopped. Try again, or pick another version.' : 'The stream stopped loading.');
         });
         hls.loadSource(resolved);
         hls.attachMedia(element);
@@ -256,12 +269,20 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     };
   }, [url, offset, audio, mode, reload]);
 
-  // After a few seconds of waiting, say why.
+  // After a few seconds of waiting, say why; after 30 seconds stuck partway through, start it again.
   useEffect(() => {
     if (!waiting) { setSlow(false); return; }
     const timer = window.setTimeout(() => setSlow(true), 5000);
-    return () => window.clearTimeout(timer);
+    const stuck = window.setTimeout(() => { if (everPlayed.current && video.current && !video.current.paused) fail.current('The stream stalled.'); }, 30_000);
+    return () => { window.clearTimeout(timer); window.clearTimeout(stuck); };
   }, [waiting]);
+
+  // Back online after a dropout: carry on without being asked.
+  useEffect(() => {
+    const onOnline = () => { if (failure) retry(); };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [failure, retry]);
 
   // Kept across a new source (a track switch or a restart further on), which resets it.
   useEffect(() => {
@@ -492,6 +513,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
 
   const onTimeUpdate = () => {
     const element = video.current!;
+    if (element.readyState < 1) return;
     const now = offset + element.currentTime;
     position.current = now;
     setTime(now);
@@ -546,7 +568,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         onPlay={() => { setPlaying(true); reveal(); }}
         onPause={() => { setPlaying(false); setVisible(true); save(); }}
         onWaiting={() => setWaiting(true)}
-        onPlaying={() => setWaiting(false)}
+        onPlaying={() => { setWaiting(false); everPlayed.current = true; }}
         onCanPlay={() => setWaiting(false)}
         onTimeUpdate={onTimeUpdate}
         onProgress={onTimeUpdate}
@@ -580,7 +602,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           <h1>Playback stopped</h1>
           <p>{failure}</p>
           <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button className="btn primary" onClick={() => { startAt.current = absolute(); setFailure(null); setReload((value) => value + 1); }}>Try again</button>
+            <button className="btn primary" onClick={retry}>Try again</button>
             {onFailedLocal && <button className="btn" onClick={onFailedLocal}>Stream from TorBox instead</button>}
           </div>
         </div>

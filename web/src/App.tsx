@@ -5,7 +5,7 @@ import { type ReactNode, Suspense, lazy, useCallback, useEffect, useState } from
 import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
 import { Figure, Loading, Mark } from './components/ui';
-import { Link, bytes, speed, usePolling, useRouter } from './lib';
+import { Link, bytes, count, speed, usePolling, useRouter } from './lib';
 import { CrumbContext, SearchContext, StatusContext, setTransferTitle, usePageTitle } from './shell';
 import { Discover } from './pages/Discover';
 
@@ -186,7 +186,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
             <div className="side-foot">
               {status.update && <a href={status.update.url} target="_blank" rel="noreferrer">Haul {status.update.version} is out. Update ↗</a>}
               <DiskMeter status={status} />
-              <span className="num">{status.libraryCounts.series} shows · {status.libraryCounts.movies} movies</span>
+              <span className="num">{count(status.libraryCounts.series, 'show')} · {count(status.libraryCounts.movies, 'movie')}</span>
               <span>Haul {status.version}</span>
             </div>
           </aside>

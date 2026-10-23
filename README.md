@@ -26,7 +26,7 @@ You need a TorBox account and either Docker or a Windows PC.
 - **Track progress** through TorBox → your machine → library, with pause, retry and cancel.
 - **Fast downloads.** Big files come down over several connections at once (TorBox limits each one), resume exactly where they stopped, and a stalled connection is retried instead of hanging. Haul checks there's disk space before each file and shows what's free in the sidebar.
 - **On your phone:** add Haul to your home screen, get notifications through ntfy, and subscribe your calendar to the Upcoming schedule.
-- **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too.
+- **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too. If Haul can't tell what a folder is, My library marks it **Needs a match**: search for the title, or paste its IMDb link.
 
 | Downloading a season | A show |
 | --- | --- |
@@ -116,6 +116,8 @@ TorBox needs a few seconds to start converting a file it hasn't streamed before,
 Haul remembers the audio language and subtitles you last picked, so the next episode (or the next film) starts the same way. With TorBox the subtitles are burned into the picture, which can add a second or two to the start. The settings button in the player also has playback speed, from 0.75× to 2×.
 
 On a phone, tap the picture to show or hide the controls, double-tap the left or right side to skip 10 seconds (keep tapping to skip further), and drag along the bar to find a spot. The lock screen, headphones and keyboard media keys can play, pause, skip and go to the next episode.
+
+If the stream breaks or stalls partway through (TorBox hiccups, Wi-Fi drops), the player starts it again from the same spot by itself, and carries on when your connection comes back.
 
 Keys: Space or K play/pause, ← → (or J L) 10 seconds, ↑ ↓ volume, M mute, C subtitles on or off, F full screen, N next episode.
 

@@ -29,7 +29,15 @@ export interface RunningServer {
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+let guarded = false;
+
 export async function startServer(overrides: Partial<ServerOptions> = {}): Promise<RunningServer> {
+  // A background check or one request that fails in an unexpected way is logged, rather than taking
+  // the server (and every download in progress) down with it.
+  if (!guarded) {
+    guarded = true;
+    process.on('unhandledRejection', (reason) => console.error('[haul] unexpected error, carrying on:', reason));
+  }
   const options = optionsFromEnv(overrides);
   fs.mkdirSync(options.dataDir, { recursive: true });
 
