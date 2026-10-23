@@ -13,7 +13,7 @@ import { registerPlay } from './play.js';
 import { ProgressStore } from './progress.js';
 import { SearchService } from './search.js';
 import { SettingsService } from './settings.js';
-import { Torbox } from './torbox.js';
+import { Torbox, TorboxError } from './torbox.js';
 import * as catalog from './catalog.js';
 import { FollowService } from './follows.js';
 import { Notifier } from './notify.js';
@@ -127,7 +127,8 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       if (serveStatic(options.webDir, ctx)) return;
       ctx.json(404, { error: 'Not found' });
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500;
+      // TorBox saying no (a refused key, a full queue) is TorBox's answer, not a fault in Haul.
+      const status = error instanceof HttpError ? error.status : error instanceof TorboxError ? 502 : 500;
       if (status === 500) console.error(`[http] ${req.method} ${url.pathname}`, error);
       ctx.json(status, { error: (error as Error).message || 'Something went wrong' });
     }
