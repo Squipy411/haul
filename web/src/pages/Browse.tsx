@@ -1,15 +1,14 @@
-import { ArrowLeft } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { MediaType, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, PosterCard } from '../components/ui';
-import { Link } from '../lib';
+import { useRouter } from '../lib';
 
 const GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller'];
 
 export function Browse({ type, catalog }: { type: MediaType; catalog: string }) {
+  const { back } = useRouter();
   const year = new Date().getFullYear();
-  const years = Array.from({ length: 8 }, (_, index) => String(year - index));
   const [genre, setGenre] = useState<string>(catalog === 'year' ? String(year) : '');
   const [items, setItems] = useState<MetaPreview[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,27 +34,26 @@ export function Browse({ type, catalog }: { type: MediaType; catalog: string }) 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setItems([]); void load(0); }, [type, catalog, genre]);
 
-  const title = `${catalog === 'top' ? 'Popular' : catalog === 'year' ? 'New' : 'Top rated'} ${type === 'series' ? 'shows' : 'movies'}`;
-  const options = catalog === 'year' ? years : ['', ...GENRES];
+  const noun = type === 'series' ? 'series' : 'films';
+  const title = catalog === 'top' ? `Popular ${noun}` : catalog === 'year' ? `New ${noun}` : `Top rated ${noun}`;
+  const options = catalog === 'year' ? Array.from({ length: 8 }, (_, index) => String(year - index)) : ['', ...GENRES];
 
   return (
     <div className="page">
-      <Link to="/" className="btn ghost sm" style={{ marginBottom: 14 }}><ArrowLeft size={15} />Discover</Link>
-      <div className="page-head"><div><h1 className="page-title">{title}</h1></div></div>
-      <div className="chips" style={{ marginBottom: 22 }}>
-        {options.map((option) => (
-          <button key={option || 'all'} className={`chip ${genre === option ? 'on' : ''}`} onClick={() => setGenre(option)}>{option || 'All genres'}</button>
-        ))}
+      <button className="btn quiet" style={{ marginLeft: -8, marginBottom: 10 }} onClick={() => back('/')}>← Back</button>
+      <div className="page-head" style={{ display: 'block' }}>
+        <h1 className="page-title">{title}</h1>
+        <div className="filters" style={{ marginTop: 18 }}>
+          {options.map((option) => (
+            <button key={option || 'all'} className={genre === option ? 'on' : ''} onClick={() => setGenre(option)}>{option || 'All'}</button>
+          ))}
+        </div>
       </div>
       {error && <ErrorNote message={error} onRetry={() => load(items.length)} />}
-      <div className="grid-posters">
-        {items.map((item) => <PosterCard key={item.id} item={item} />)}
-      </div>
+      <div className="grid">{items.map((item) => <PosterCard key={item.id} item={item} />)}</div>
       {loading && <Loading />}
       {!loading && !done && items.length > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 26 }}>
-          <button className="btn" onClick={() => load(items.length)}>Load more</button>
-        </div>
+        <div style={{ marginTop: 30 }}><button className="btn" onClick={() => load(items.length)}>Load more</button></div>
       )}
     </div>
   );

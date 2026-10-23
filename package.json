@@ -1,7 +1,7 @@
 {
   "name": "haul",
   "productName": "Haul",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "All-in-one TorBox media downloader: browse, pick a season pack or a whole season, and Haul downloads, renames and hosts it for Nuvio and Stremio.",
   "author": "Squipy411",
   "license": "MIT",
@@ -26,7 +26,9 @@
     "dist:win:mac": "npm run build && electron-builder --win --x64 --publish never -c.win.signAndEditExecutable=false"
   },
   "devDependencies": {
-    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
     "@types/node": "^24.10.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.2.0",

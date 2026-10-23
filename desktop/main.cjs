@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+if (process.env.HAUL_USER_DATA) app.setPath('userData', process.env.HAUL_USER_DATA);
+
 const configFile = () => path.join(app.getPath('userData'), 'haul-desktop.json');
 let mainWindow = null;
 let localServer = null;
@@ -85,8 +87,11 @@ async function openHaul() {
   }
 }
 
-ipcMain.handle('haul:get-config', () => readConfig());
-ipcMain.handle('haul:save-config', async (_event, config) => {
+const fromSetup = (event) => event.senderFrame && event.senderFrame.url.startsWith('file:');
+
+ipcMain.handle('haul:get-config', (event) => (fromSetup(event) ? readConfig() : null));
+ipcMain.handle('haul:save-config', async (event, config) => {
+  if (!fromSetup(event)) throw new Error('Not allowed');
   if (config.mode === 'remote') {
     const url = String(config.remoteUrl || '').trim().replace(/\/+$/, '');
     if (!/^https?:\/\//.test(url)) throw new Error('Enter an address that starts with http:// or https://');

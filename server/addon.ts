@@ -185,7 +185,7 @@ export function registerAddon(router: Router, deps: { settings: SettingsService;
       const quality = file.resolution && file.resolution !== 'unknown' ? (file.resolution === '2160p' ? '4K' : file.resolution) : 'Local';
       return {
         name: `Haul\n${quality}`,
-        title: [`📁 ${name}`, `💾 ${formatBytes(file.size)}${file.tags.length ? ` · ${file.tags.join(' · ')}` : ''}`].join('\n'),
+        title: [name, [formatBytes(file.size), ...file.tags].join(' · ')].join('\n'),
         url: `${base(ctx)}/stream-file/${file.id}/${expires}/${signature}/${encodeURIComponent(name)}`,
         subtitles: file.subtitles.map((subtitle, index) => ({
           id: `${file.id}-${index}`,

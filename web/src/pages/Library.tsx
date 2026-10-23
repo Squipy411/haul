@@ -1,35 +1,27 @@
-import { AlertCircle, Copy, ExternalLink, FolderOpen, Library as LibraryIcon, Puzzle, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { LibrarySummary, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
-import { Empty, ErrorNote, Loading, Modal, Poster, Segmented } from '../components/ui';
+import { Empty, ErrorNote, Loading, Modal, Poster, Seg } from '../components/ui';
 import { ago, bytes, copyText, useAsync, usePolling, useRouter, useToast } from '../lib';
 
-export function AddonCard() {
+function AddonPanel() {
   const toast = useToast();
   const { data, error } = useAsync(() => api.addon(), []);
   if (error) return <ErrorNote message={error} />;
   if (!data) return null;
   return (
-    <div className="addon-card">
-      <span className="icon-wrap"><Puzzle size={24} /></span>
+    <section className="addon">
       <div style={{ minWidth: 0 }}>
-        <div className="row" style={{ gap: 8 }}>
-          <b style={{ fontSize: 15 }}>Your Nuvio & Stremio addon</b>
-          {data.enabled ? <span className="badge good">On</span> : <span className="badge bad">Off</span>}
-        </div>
-        <div className="muted" style={{ fontSize: 13 }}>
-          Install this once in Nuvio (Settings → Addons → Install from URL). Your library shows up as catalogs, and anything you own plays as a "Haul" stream.
-        </div>
-        <div className="url-box">
-          <code title={data.manifestUrl}>{data.manifestUrl}</code>
-        </div>
+        <span className="label">Nuvio / Stremio addon {data.enabled ? '' : '· off'}</span>
+        <h2>Watch this library in Nuvio</h2>
+        <p>Install the URL once in Nuvio (Settings → Addons → install from URL). You get your shows and films as catalogs, and a “Haul” stream on anything you own. Keep the URL private.</p>
+        <code className="url" title={data.manifestUrl}>{data.manifestUrl}</code>
       </div>
       <div className="row wrap">
-        <button className="btn primary" onClick={async () => toast(await copyText(data.manifestUrl) ? 'Addon URL copied. Paste it into Nuvio.' : 'Copy failed', 'ok')}><Copy size={15} />Copy URL</button>
-        <a className="btn" href={data.stremioUrl}><ExternalLink size={15} />Open in Stremio</a>
+        <button className="btn primary" onClick={async () => toast(await copyText(data.manifestUrl) ? 'Addon URL copied' : 'Copy failed', 'ok')}>Copy URL</button>
+        <a className="btn" href={data.stremioUrl}>Open in Stremio</a>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -46,6 +38,8 @@ function MatchModal({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
       try {
         const found = await api.search(query.trim());
         if (alive) setResults(item.type === 'series' ? found.series : found.movies);
+      } catch {
+        if (alive) setResults([]);
       } finally {
         if (alive) setLoading(false);
       }
@@ -55,7 +49,7 @@ function MatchModal({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
   const choose = async (imdbId: string | null) => {
     try {
       await api.matchLibraryItem(item.id, imdbId);
-      toast(imdbId ? 'Match saved' : 'Match cleared');
+      toast(imdbId ? 'Match saved' : 'Match removed');
       onSaved();
       onClose();
     } catch (error) {
@@ -63,18 +57,20 @@ function MatchModal({ item, onClose, onSaved }: { item: LibrarySummary; onClose:
     }
   };
   return (
-    <Modal title="Fix match" subtitle={<span className="mono">{item.folder}</span>} onClose={onClose} footer={<><span className="faint" style={{ fontSize: 12.5 }}>Matches decide posters and which title plays this file in Nuvio.</span>{item.matched && <button className="btn ghost danger" onClick={() => choose(null)}>Remove match</button>}</>}>
-      <div className="search-box" style={{ marginBottom: 16 }}>
-        <Search size={18} />
-        <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus />
-      </div>
-      {loading && <Loading />}
-      <div className="grid-posters">
+    <Modal
+      title="Match this folder"
+      subtitle={<span className="mono" style={{ fontSize: 12 }}>{item.folder}</span>}
+      onClose={onClose}
+      footer={<><span className="hint">The match sets the poster and which title plays these files in Nuvio.</span>{item.matched && <button className="btn sm danger" onClick={() => choose(null)}>Remove match</button>}</>}
+    >
+      <input className="input" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus style={{ marginBottom: 18 }} />
+      {loading && <Loading text="Searching" />}
+      <div className="grid">
         {results.map((result) => (
           <button key={result.id} className="poster-card" style={{ background: 'none', border: 0, padding: 0, textAlign: 'left' }} onClick={() => choose(result.id)}>
             <Poster src={result.poster} title={result.name} />
-            <div className="poster-title ellipsis">{result.name}</div>
-            <div className="poster-meta">{result.releaseInfo}</div>
+            <div className="poster-name ellipsis">{result.name}</div>
+            <div className="poster-sub">{result.releaseInfo}</div>
           </button>
         ))}
       </div>
@@ -89,17 +85,17 @@ export function LibraryPage() {
   const [type, setType] = useState<'series' | 'movie'>('series');
   const [query, setQuery] = useState('');
   const [fixing, setFixing] = useState<LibrarySummary | null>(null);
-  usePolling(() => { api.library().then(setData, () => undefined); }, 4000, Boolean(data?.scanning));
+  usePolling(() => { api.library().then(setData, () => undefined); }, 3000, Boolean(data?.scanning));
 
-  const items = (data?.items ?? []).filter((item) => item.type === type && (!query || item.title.toLowerCase().includes(query.toLowerCase())));
-  const movies = data?.items.filter((item) => item.type === 'movie') ?? [];
-  const shows = data?.items.filter((item) => item.type === 'series') ?? [];
-  const totalSize = (data?.items ?? []).reduce((sum, item) => sum + item.size, 0);
-  const unmatched = (data?.items ?? []).filter((item) => !item.matched).length;
+  const all = data?.items ?? [];
+  const items = all.filter((item) => item.type === type && (!query || item.title.toLowerCase().includes(query.toLowerCase())));
+  const shows = all.filter((item) => item.type === 'series');
+  const films = all.filter((item) => item.type === 'movie');
+  const unmatched = all.filter((item) => !item.matched).length;
 
   const rescan = async () => {
     await api.scanLibrary();
-    toast('Rescanning your folders…');
+    toast('Rescanning folders');
     setTimeout(reload, 1200);
   };
 
@@ -108,52 +104,46 @@ export function LibraryPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Library</h1>
-          <div className="page-sub">Everything in your Movies and TV Shows folders, hosted for Nuvio.</div>
+          <div className="sub">Everything in your Movies and TV Shows folders, including what you had before Haul.</div>
         </div>
-        <button className="btn" onClick={rescan} disabled={data?.scanning}>
-          <RefreshCw size={15} className={data?.scanning ? 'spin' : ''} />{data?.scanning ? 'Scanning…' : 'Rescan'}
-        </button>
+        <button className="btn" onClick={rescan} disabled={data?.scanning}>{data?.scanning ? 'Scanning…' : 'Rescan folders'}</button>
       </div>
-      <AddonCard />
+      <AddonPanel />
       {error && <ErrorNote message={error} onRetry={reload} />}
       {!data && !error && <Loading />}
       {data && (
         <>
-          <div className="row wrap" style={{ justifyContent: 'space-between', marginBottom: 20, gap: 14 }}>
-            <div className="stats-row">
-              <span><b>{shows.length}</b> shows</span>
-              <span><b>{movies.length}</b> movies</span>
-              <span><b>{bytes(totalSize)}</b> on disk</span>
-              {unmatched > 0 && <span style={{ color: 'var(--warn)' }}><b style={{ color: 'inherit' }}>{unmatched}</b> need a match</span>}
-              <span className="faint">Scanned {ago(data.scannedAt)}</span>
+          <div className="row wrap" style={{ justifyContent: 'space-between', gap: 16, marginBottom: 24 }}>
+            <div className="figures-row">
+              <span><b>{shows.length}</b>series</span>
+              <span><b>{films.length}</b>films</span>
+              <span><b>{bytes(all.reduce((sum, item) => sum + item.size, 0))}</b>on disk</span>
+              {unmatched > 0 && <span className="warn"><b className="warn">{unmatched}</b>unmatched</span>}
+              <span style={{ alignSelf: 'center' }}>scanned {ago(data.scannedAt)}</span>
             </div>
             <div className="row">
-              <div className="search-box" style={{ width: 220 }}>
-                <Search size={16} />
-                <input className="input" style={{ height: 36, fontSize: 13.5, paddingLeft: 38 }} placeholder="Filter" value={query} onChange={(event) => setQuery(event.target.value)} />
-              </div>
-              <Segmented value={type} onChange={setType} options={[{ value: 'series', label: `Shows ${shows.length}` }, { value: 'movie', label: `Movies ${movies.length}` }]} />
+              <input className="input" style={{ width: 200, height: 30 }} placeholder="Filter" value={query} onChange={(event) => setQuery(event.target.value)} />
+              <Seg value={type} onChange={setType} options={[{ value: 'series', label: 'SERIES' }, { value: 'movie', label: 'FILMS' }]} />
             </div>
           </div>
           {!items.length && (
-            <Empty icon={<LibraryIcon size={34} />} title={query ? 'No matches' : `No ${type === 'series' ? 'shows' : 'movies'} yet`}>
-              {query ? 'Try another name.' : 'Downloads land here automatically. Folders you already have are picked up on the next scan.'}
+            <Empty title={query ? 'No matches' : `No ${type === 'series' ? 'series' : 'films'} yet`}>
+              {query ? 'Try another name.' : 'Downloads land here. Existing folders show up after the next scan.'}
             </Empty>
           )}
-          <div className="grid-posters">
+          <div className="grid">
             {items.map((item) => (
               <div key={item.id} className="poster-card" onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}>
                 <Poster src={item.poster} title={item.title} />
-                <div className="poster-title ellipsis" title={item.title}>{item.title}</div>
-                <div className="poster-meta row" style={{ gap: 6, justifyContent: 'space-between' }}>
-                  <span>{item.type === 'series' ? `${item.fileCount} ep · ${item.seasons.length} season${item.seasons.length === 1 ? '' : 's'}` : item.year ?? bytes(item.size)}</span>
+                <div className="poster-name ellipsis" title={item.title}>{item.title}</div>
+                <div className="poster-sub" style={{ justifyContent: 'space-between' }}>
+                  <span>{item.type === 'series' ? `${item.fileCount} ep` : item.year ?? bytes(item.size)}</span>
                   <button
-                    className="btn ghost sm icon"
-                    style={{ width: 24, height: 24 }}
-                    title={item.matched ? 'Change match' : 'Not matched: click to fix'}
+                    className="btn quiet sm"
+                    style={{ height: 'auto', padding: 0, fontSize: 11, color: item.matched ? undefined : 'var(--warn)' }}
                     onClick={(event) => { event.stopPropagation(); setFixing(item); }}
                   >
-                    {item.matched ? <FolderOpen size={13} /> : <AlertCircle size={14} color="var(--warn)" />}
+                    {item.matched ? 'match' : 'unmatched'}
                   </button>
                 </div>
               </div>

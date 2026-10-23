@@ -77,12 +77,12 @@ export async function catalog(type: MediaType, id: 'top' | 'year' | 'imdbRating'
 export async function home(): Promise<HomeRow[]> {
   const year = String(new Date().getFullYear());
   const rows: Array<{ id: string; title: string; type: MediaType; load: () => Promise<MetaPreview[]> }> = [
-    { id: 'series-top', title: 'Popular shows', type: 'series', load: () => catalog('series', 'top') },
-    { id: 'movie-top', title: 'Popular movies', type: 'movie', load: () => catalog('movie', 'top') },
-    { id: 'series-new', title: `New shows of ${year}`, type: 'series', load: () => catalog('series', 'year', { genre: year }) },
-    { id: 'movie-new', title: `New movies of ${year}`, type: 'movie', load: () => catalog('movie', 'year', { genre: year }) },
-    { id: 'series-featured', title: 'Top rated shows', type: 'series', load: () => catalog('series', 'imdbRating') },
-    { id: 'movie-featured', title: 'Top rated movies', type: 'movie', load: () => catalog('movie', 'imdbRating') }
+    { id: 'series-top', title: 'Popular series', type: 'series', load: () => catalog('series', 'top') },
+    { id: 'movie-top', title: 'Popular films', type: 'movie', load: () => catalog('movie', 'top') },
+    { id: 'series-new', title: `New series, ${year}`, type: 'series', load: () => catalog('series', 'year', { genre: year }) },
+    { id: 'movie-new', title: `New films, ${year}`, type: 'movie', load: () => catalog('movie', 'year', { genre: year }) },
+    { id: 'series-featured', title: 'Highest rated series', type: 'series', load: () => catalog('series', 'imdbRating') },
+    { id: 'movie-featured', title: 'Highest rated films', type: 'movie', load: () => catalog('movie', 'imdbRating') }
   ];
   const settled = await Promise.allSettled(rows.map((row) => row.load()));
   return rows
@@ -118,7 +118,7 @@ export async function meta(type: MediaType, id: string): Promise<Meta> {
   const url = `${CINEMETA}/meta/${type}/${id}.json`;
   const data = await cache.get(url, 6 * 60 * 60_000, () => getJson<{ meta?: any }>(url));
   const raw = data.meta;
-  if (!raw || !raw.name) throw new Error('Title not found');
+  if (!raw || !raw.name || (raw.type && raw.type !== type)) throw new Error('Title not found');
   const base = preview(raw, type)!;
   const episodes: Episode[] = type === 'series'
     ? (raw.videos || [])

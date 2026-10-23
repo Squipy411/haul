@@ -41,6 +41,7 @@ export class JobManager {
   private readonly file: JsonFile<{ jobs: Job[] }>;
   private readonly running = new Map<string, AbortController>();
   private readonly misses = new Map<string, number>();
+  private readonly readds = new Map<string, number>();
   private readonly samples = new Map<string, { bytes: number; at: number }>();
   private ticking = false;
   private lastCreate = 0;
@@ -161,14 +162,13 @@ export class JobManager {
     job.error = undefined;
     job.note = undefined;
     job.nextAttemptAt = undefined;
-    if (job.files.length && job.torbox.id) {
-      for (const file of job.files) if (file.status === 'failed' || file.status === 'pending') { file.status = 'pending'; file.attempts = 0; file.error = undefined; file.retryAt = undefined; }
-      job.status = 'downloading';
-    } else {
-      job.files = [];
-      job.torbox = {};
-      job.status = 'queued';
-    }
+    // Re-read the torrent from TorBox: finished files are skipped, partial ones resume,
+    // and a torrent that has left the TorBox list gets added again.
+    job.files = [];
+    this.misses.delete(job.id);
+    this.readds.delete(job.id);
+    job.status = job.torbox.id ? 'torbox' : 'queued';
+    if (!job.torbox.id) job.torbox = {};
     this.touch(job);
     void this.tick();
     return job;
@@ -183,7 +183,7 @@ export class JobManager {
     job.speed = 0;
     this.touch(job);
     await this.cleanupPartials(job);
-    if (job.torbox.createdByHaul && job.torbox.id) await this.deps.torbox.remove(job.torbox.id).catch(() => undefined);
+    await this.releaseTorrent(job);
     return job;
   }
 
@@ -198,6 +198,22 @@ export class JobManager {
   clearFinished(): void {
     this.file.data.jobs = this.jobs.filter((job) => !['completed', 'cancelled'].includes(job.status));
     this.file.save();
+  }
+
+  /** Removes the TorBox torrent Haul added for this job, unless another download still needs it. */
+  private async releaseTorrent(job: Job): Promise<void> {
+    if (!job.torbox.createdByHaul || !job.torbox.id) return;
+    const heir = this.jobs.find((other) => other.id !== job.id
+      && (ACTIVE.has(other.status) || other.status === 'paused')
+      && (other.torbox.id === job.torbox.id || other.release.hash === job.release.hash));
+    if (heir) {
+      // The last download using the torrent cleans it up instead.
+      heir.torbox.createdByHaul = true;
+      job.torbox.createdByHaul = false;
+      this.touch(heir);
+      return;
+    }
+    await this.deps.torbox.remove(job.torbox.id).catch(() => undefined);
   }
 
   private partDir(job: Job): string {
@@ -223,7 +239,9 @@ export class JobManager {
           await this.pollTorbox();
         }
       } else {
-        for (const job of this.jobs) if (job.status === 'queued') job.note = 'Waiting for a TorBox API key — add it in Settings.';
+        for (const job of this.jobs) {
+          if (job.status === 'queued' && !job.note) { job.note = 'Waiting for a TorBox API key. Add it in Settings.'; this.touch(job); }
+        }
       }
       this.fillDownloadSlots();
       this.updateSpeeds();
@@ -292,7 +310,20 @@ export class JobManager {
         if (job.torbox.queuedId && !job.torbox.id) { job.torbox.state = 'Queued on TorBox'; continue; }
         const misses = (this.misses.get(job.id) ?? 0) + 1;
         this.misses.set(job.id, misses);
-        if (misses >= 4) { job.status = 'failed'; job.error = 'This torrent is no longer in your TorBox list.'; this.touch(job); }
+        if (misses >= 4) {
+          this.misses.delete(job.id);
+          const readds = (this.readds.get(job.id) ?? 0) + 1;
+          this.readds.set(job.id, readds);
+          if (readds > 2) {
+            job.status = 'failed';
+            job.error = 'The torrent keeps disappearing from your TorBox list.';
+          } else {
+            job.status = 'queued';
+            job.torbox = {};
+            job.note = 'The torrent left your TorBox list. Adding it again.';
+          }
+          this.touch(job);
+        }
         continue;
       }
       this.misses.delete(job.id);
@@ -401,9 +432,7 @@ export class JobManager {
     job.completedAt = Date.now();
     job.speed = 0;
     void this.cleanupPartials(job);
-    if (this.deps.settings.value.downloads.removeFromTorbox && job.torbox.createdByHaul && job.torbox.id) {
-      void this.deps.torbox.remove(job.torbox.id).catch(() => undefined);
-    }
+    if (this.deps.settings.value.downloads.removeFromTorbox) void this.releaseTorrent(job);
     try { this.deps.onCompleted(job); } catch (error) { console.error('[jobs] library update failed', error); }
   }
 

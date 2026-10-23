@@ -1,12 +1,10 @@
-import { ArrowRight, CheckCircle2, ExternalLink, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { Settings, TorboxAccount } from '../../../shared/types';
+import type { TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
 import { useToast } from '../lib';
 
 export function Setup({ onDone }: { onDone: () => void }) {
   const toast = useToast();
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [account, setAccount] = useState<TorboxAccount | null>(null);
   const [busy, setBusy] = useState(false);
@@ -14,7 +12,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [tvDir, setTvDir] = useState('');
 
   useEffect(() => {
-    api.settings().then((value) => { setSettings(value); setMoviesDir(value.moviesDir); setTvDir(value.tvDir); }, () => undefined);
+    api.settings().then((value) => { setMoviesDir(value.moviesDir); setTvDir(value.tvDir); }, () => undefined);
   }, []);
 
   const finish = async () => {
@@ -24,9 +22,8 @@ export function Setup({ onDone }: { onDone: () => void }) {
       setAccount(result);
       if (!result.ok) return;
       await api.saveSettings({ torboxApiKey: apiKey.trim(), moviesDir, tvDir });
-      const check = await api.checkFolders();
-      const broken = check.results.filter((folder) => !folder.ok);
-      if (broken.length) toast(`Haul can't write to ${broken.map((folder) => folder.dir).join(', ')}. You can fix this in Settings.`, 'error');
+      const broken = (await api.checkFolders()).results.filter((folder) => !folder.ok);
+      if (broken.length) toast(`Can't write to ${broken.map((folder) => folder.dir).join(', ')}. Fix it in Settings.`, 'error');
       onDone();
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -36,36 +33,29 @@ export function Setup({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="splash">
-      <div className="splash-card">
-        <img className="logo" src="/icon.svg" alt="" />
-        <div>
-          <h1>Welcome to Haul</h1>
-          <p className="muted" style={{ margin: '6px 0 0' }}>Browse movies and shows, pick a season pack or a whole season, and Haul brings it to this server through TorBox, renamed and ready for Nuvio.</p>
-        </div>
-        <div className="steps">
-          <div className="step"><b>1</b>Connect your TorBox account. All torrenting happens on TorBox's servers.</div>
-          <div className="step"><b>2</b>Confirm where movies and shows should go.</div>
-          <div className="step"><b>3</b>Install the Haul addon in Nuvio from the Library page.</div>
-        </div>
+    <div className="gate">
+      <form className="gate-inner" onSubmit={(event) => { event.preventDefault(); void finish(); }}>
+        <div className="brand"><img src="/icon.svg" alt="" />HAUL</div>
+        <h1>Connect TorBox</h1>
+        <ol>
+          <li>Paste your TorBox API key. Torrents run on TorBox, never on this server.</li>
+          <li>Check where films and series should be saved.</li>
+          <li>Later, add the addon URL from Library to Nuvio.</li>
+        </ol>
         <label className="field">
-          <span>TorBox API key</span>
-          <input className="input mono" type="password" autoComplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAccount(null); }} />
-          <a className="hint" href="https://torbox.app/settings" target="_blank" rel="noreferrer" style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>Get it from torbox.app → Settings <ExternalLink size={11} /></a>
+          <span>API key</span>
+          <input className="input mono" type="password" autoComplete="off" autoFocus value={apiKey} onChange={(event) => { setApiKey(event.target.value); setAccount(null); }} />
+          <a className="hint" href="https://torbox.app/settings" target="_blank" rel="noreferrer">Find it at torbox.app/settings ↗</a>
         </label>
         {account && (account.ok
-          ? <div className="notice info"><CheckCircle2 size={16} />Connected: {account.plan} plan</div>
-          : <div className="notice bad"><XCircle size={16} />{account.error}</div>)}
-        {settings && (
-          <div className="form-grid">
-            <label className="field"><span>Movies folder</span><input className="input mono" value={moviesDir} onChange={(event) => setMoviesDir(event.target.value)} /></label>
-            <label className="field"><span>TV shows folder</span><input className="input mono" value={tvDir} onChange={(event) => setTvDir(event.target.value)} /></label>
-          </div>
-        )}
-        <button className="btn primary lg" disabled={!apiKey.trim() || busy} onClick={finish}>
-          {busy ? <span className="spinner" /> : null}Connect and start <ArrowRight size={17} />
-        </button>
-      </div>
+          ? <div className="note info">Connected · {account.plan} plan</div>
+          : <div className="note bad">{account.error}</div>)}
+        <div className="form-grid">
+          <label className="field"><span>Films folder</span><input className="input mono" value={moviesDir} onChange={(event) => setMoviesDir(event.target.value)} /></label>
+          <label className="field"><span>Series folder</span><input className="input mono" value={tvDir} onChange={(event) => setTvDir(event.target.value)} /></label>
+        </div>
+        <div><button className="btn primary lg" disabled={!apiKey.trim() || busy}>{busy && <span className="spinner" />}Connect</button></div>
+      </form>
     </div>
   );
 }

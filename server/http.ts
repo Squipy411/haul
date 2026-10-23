@@ -138,7 +138,8 @@ export function mimeType(file: string): string {
 export function serveStatic(webDir: string, ctx: Context): boolean {
   const { req, res, url } = ctx;
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-  let pathname = decodeURIComponent(url.pathname);
+  let pathname: string;
+  try { pathname = decodeURIComponent(url.pathname); } catch { return false; }
   if (pathname.endsWith('/')) pathname += 'index.html';
   const resolved = path.resolve(webDir, `.${pathname}`);
   if (!resolved.startsWith(path.resolve(webDir))) return false;
@@ -151,12 +152,18 @@ export function serveStatic(webDir: string, ctx: Context): boolean {
     try { stat = fs.statSync(file); } catch { return false; }
   }
   const immutable = file.includes(`${path.sep}assets${path.sep}`);
-  res.writeHead(200, {
+  const headers: Record<string, string> = {
     'Content-Type': mimeType(file),
     'Content-Length': String(stat.size),
     'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-    'X-Content-Type-Options': 'nosniff'
-  });
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer'
+  };
+  // Posters and backdrops come from catalog CDNs; everything else is served from here.
+  if (file.endsWith('.html')) {
+    headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; script-src 'self'; frame-ancestors 'self'; base-uri 'self'";
+  }
+  res.writeHead(200, headers);
   if (req.method === 'HEAD') res.end();
   else fs.createReadStream(file).pipe(res);
   return true;

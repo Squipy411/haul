@@ -1,147 +1,129 @@
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Cloud, Download, HardDriveDownload, Pause, Play, RotateCcw, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Job } from '../../../shared/types';
 import { api } from '../api';
-import { ResolutionBadge } from '../components/Releases';
-import { Empty, ErrorNote, Loading, Segmented } from '../components/ui';
+import { Empty, ErrorNote, Loading, Seg } from '../components/ui';
 import { Link, ago, bytes, duration, speed, useAsync, usePolling, useToast } from '../lib';
 
-type Filter = 'active' | 'done' | 'failed' | 'all';
+type Filter = 'active' | 'done' | 'stopped' | 'all';
 
 const ACTIVE = new Set(['queued', 'torbox', 'downloading', 'paused']);
 
-function jobProgress(job: Job): { torbox: number; local: number; done: number; total: number; files: number; filesDone: number } {
-  const videos = job.files;
-  const total = videos.reduce((sum, file) => sum + file.size, 0);
-  const done = videos.reduce((sum, file) => sum + Math.min(file.downloaded, file.size), 0);
+function totals(job: Job) {
+  const total = job.files.reduce((sum, file) => sum + file.size, 0);
+  const done = job.files.reduce((sum, file) => sum + Math.min(file.downloaded, file.size), 0);
+  const videos = job.files.filter((file) => file.kind === 'video');
   return {
-    torbox: job.status === 'queued' ? 0 : job.files.length ? 1 : job.torbox.progress ?? 0,
-    local: total ? done / total : 0,
-    done,
     total,
-    files: videos.filter((file) => file.kind === 'video').length,
-    filesDone: videos.filter((file) => file.kind === 'video' && (file.status === 'done' || file.status === 'skipped')).length
+    done,
+    videos: videos.length,
+    videosDone: videos.filter((file) => file.status === 'done' || file.status === 'skipped').length
   };
 }
 
 function Stages({ job }: { job: Job }) {
-  const stage = job.status === 'queued' ? 0 : job.status === 'torbox' ? 1 : job.status === 'downloading' ? 2 : job.status === 'completed' ? 3 : job.files.length ? 2 : 1;
+  const { total, done } = totals(job);
+  const onServer = job.files.length > 0;
+  const torbox = onServer || job.status === 'completed' ? 1 : job.status === 'queued' ? 0 : Math.max(0.03, job.torbox.progress ?? 0);
+  const server = job.status === 'completed' ? 1 : total ? done / total : 0;
+  const library = job.status === 'completed' ? 1 : 0;
   const steps = [
-    { label: 'Queued', icon: Download },
-    { label: 'TorBox', icon: Cloud },
-    { label: 'To server', icon: HardDriveDownload },
-    { label: 'In library', icon: Check }
+    { label: 'TorBox', value: torbox, on: job.status === 'torbox' || job.status === 'queued' },
+    { label: 'Server', value: server, on: job.status === 'downloading' },
+    { label: 'Library', value: library, on: false }
   ];
   return (
     <div className="stages">
-      {steps.map((step, index) => {
-        const Icon = step.icon;
-        const state = index < stage || job.status === 'completed' ? 'done' : index === stage ? 'on' : '';
-        return (
-          <span key={step.label} className="row" style={{ gap: 8 }}>
-            {index > 0 && <span className="stage-line" />}
-            <span className={`stage ${state}`}><Icon size={13} />{step.label}</span>
-          </span>
-        );
-      })}
+      {steps.map((step) => (
+        <div key={step.label} className={`stage ${step.value >= 1 ? 'done' : step.on ? 'on' : ''}`}>
+          <div className="bar"><i style={{ width: `${Math.round(step.value * 100)}%` }} /></div>
+          <span className="label">{step.label}</span>
+        </div>
+      ))}
     </div>
   );
 }
 
-function statusLine(job: Job): string {
-  const progress = jobProgress(job);
+function statusText(job: Job): string[] {
+  const { total, done, videos, videosDone } = totals(job);
   switch (job.status) {
-    case 'queued': return job.note ?? 'Waiting to send to TorBox…';
-    case 'torbox': {
-      const pct = Math.round((job.torbox.progress ?? 0) * 100);
-      const parts = [`TorBox is fetching the torrent · ${pct}%`];
-      if (job.torbox.speed) parts.push(speed(job.torbox.speed));
-      if (job.torbox.eta) parts.push(`${duration(job.torbox.eta)} left`);
-      return job.torbox.state === 'Queued on TorBox' ? 'Queued on TorBox (all download slots busy)' : parts.join(' · ');
-    }
+    case 'queued':
+      return [job.note ?? 'Waiting to send to TorBox'];
+    case 'torbox':
+      if (job.torbox.state === 'Queued on TorBox') return ['Queued on TorBox, all slots busy'];
+      return [
+        `TorBox ${Math.round((job.torbox.progress ?? 0) * 100)}%`,
+        job.torbox.state ? job.torbox.state.toLowerCase() : '',
+        speed(job.torbox.speed),
+        job.torbox.eta ? `${duration(job.torbox.eta)} left` : ''
+      ].filter(Boolean);
     case 'downloading': {
-      const remaining = progress.total - progress.done;
-      const eta = job.speed > 0 ? remaining / job.speed : 0;
-      return [`Downloading to your server · ${progress.filesDone}/${progress.files} files`, speed(job.speed), eta ? `${duration(eta)} left` : ''].filter(Boolean).join(' · ');
+      const eta = job.speed > 0 ? (total - done) / job.speed : 0;
+      return [`${videosDone}/${videos} files`, `${bytes(done)} of ${bytes(total)}`, speed(job.speed), eta ? `${duration(eta)} left` : ''].filter(Boolean);
     }
-    case 'paused': return 'Paused';
-    case 'completed': return `Done ${ago(job.completedAt)} · ${progress.files} file${progress.files === 1 ? '' : 's'} · ${bytes(progress.total)}`;
-    case 'failed': return 'Failed';
-    case 'cancelled': return 'Cancelled';
+    case 'paused': return ['Paused', total ? `${bytes(done)} of ${bytes(total)}` : ''].filter(Boolean);
+    case 'completed': return [`Finished ${ago(job.completedAt)}`, `${videos} file${videos === 1 ? '' : 's'}`, bytes(total)];
+    case 'failed': return ['Failed'];
+    case 'cancelled': return ['Cancelled'];
   }
 }
 
-function JobCard({ job, onChange }: { job: Job; onChange: () => void }) {
+function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const progress = jobProgress(job);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     try { await action(); onChange(); } catch (error) { toast((error as Error).message, 'error'); } finally { setBusy(false); }
   };
-  const showLocal = job.status === 'downloading' || (job.status === 'paused' && job.files.length) || job.status === 'completed';
-  const percent = showLocal ? progress.local : progress.torbox;
   const link = `/title/${job.type}/${job.imdbId}${job.season !== undefined ? `?season=${job.season}` : ''}`;
+  const res = job.release.info.resolution;
 
   return (
     <div className="job">
       <Link to={link} className="thumb">{job.poster && <img src={job.poster} alt="" loading="lazy" />}</Link>
       <div style={{ minWidth: 0 }}>
-        <div className="job-top">
-          <div style={{ minWidth: 0 }}>
-            <div className="row" style={{ gap: 8 }}>
-              <h3 className="ellipsis"><Link to={link}>{job.title}</Link></h3>
-              <span className="badge outline">{job.label}</span>
-              <ResolutionBadge resolution={job.release.info.resolution} />
-            </div>
-            <div className="release-name ellipsis mono" title={job.release.name}>{job.release.name}</div>
-          </div>
-          <div className="actions">
-            {(job.status === 'queued' || job.status === 'torbox' || job.status === 'downloading') && (
-              <button className="btn sm icon" title="Pause" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'pause'))}><Pause size={15} /></button>
-            )}
-            {job.status === 'paused' && <button className="btn sm" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'resume'))}><Play size={14} />Resume</button>}
-            {(job.status === 'failed' || job.status === 'cancelled') && <button className="btn sm" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'retry'))}><RotateCcw size={14} />Retry</button>}
-            {ACTIVE.has(job.status)
-              ? <button className="btn sm icon danger" title="Cancel" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'cancel'))}><X size={15} /></button>
-              : <button className="btn sm icon ghost" title="Remove from list" disabled={busy} onClick={() => run(() => api.removeJob(job.id))}><Trash2 size={15} /></button>}
-          </div>
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          <h3><Link to={link}>{job.title}</Link></h3>
+          <span className="tag">{job.label}</span>
+          {res !== 'unknown' && <span className="tag">{res}</span>}
         </div>
+        <div className="rname ellipsis" title={job.release.name}>{job.release.name}</div>
         <Stages job={job} />
-        <div className={`progress ${job.status === 'completed' ? 'good' : !showLocal ? 'torbox' : ''}`}>
-          <div style={{ width: `${Math.max(job.status === 'queued' ? 0 : 2, Math.round(percent * 100))}%` }} />
+        <div className="job-status">
+          {statusText(job).map((part, index) => <span key={index}>{part}</span>)}
+          {job.files.length > 0 && (
+            <button className="btn quiet sm" style={{ height: 18, padding: 0 }} onClick={() => setOpen((value) => !value)}>{open ? 'Hide files' : 'Files'}</button>
+          )}
         </div>
-        <div className="job-meta">
-          <span>{statusLine(job)}</span>
-          <span className="row" style={{ gap: 12 }}>
-            {showLocal && progress.total > 0 && <span>{bytes(progress.done)} of {bytes(progress.total)}</span>}
-            {job.files.length > 0 && (
-              <button className="btn ghost sm" style={{ height: 24 }} onClick={() => setOpen((value) => !value)}>
-                {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}Files
-              </button>
-            )}
-          </span>
-        </div>
-        {job.note && job.status !== 'queued' && <div className="notice warn"><AlertTriangle size={16} />{job.note}</div>}
-        {job.error && <div className="notice bad"><AlertTriangle size={16} />{job.error}</div>}
+        {job.note && job.status !== 'queued' && <div className="note warn">{job.note}</div>}
+        {job.error && <div className="note bad">{job.error}</div>}
         {open && (
           <div className="job-files">
-            {job.files.map((file) => (
-              <div key={file.key} className="job-file">
-                <div style={{ minWidth: 0 }}>
-                  <div className="ellipsis">{file.episode !== undefined ? `E${file.episode}${file.episodeEnd ? `–E${file.episodeEnd}` : ''} · ` : ''}{file.kind === 'subtitle' ? 'Subtitles · ' : ''}{file.target.split(/[\\/]/).pop()}</div>
-                  <div className="path ellipsis mono" title={file.target}>{file.target}</div>
-                  {file.error && file.status !== 'done' && <div style={{ color: 'var(--bad)', fontSize: 11.5 }}>{file.error}</div>}
+            {job.files.map((file) => {
+              const pct = file.size ? Math.round((file.downloaded / file.size) * 100) : 0;
+              const finished = file.status === 'done' || file.status === 'skipped';
+              return (
+                <div key={file.key} className="job-file">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="ellipsis">{file.target.split(/[\\/]/).pop()}</div>
+                    <div className="path ellipsis" title={file.target}>{file.target}</div>
+                    {file.error && !finished && <div className="bad" style={{ fontSize: 11 }}>{file.error}</div>}
+                  </div>
+                  <div className={`thin ${finished ? 'done' : ''}`}><i style={{ width: `${finished ? 100 : pct}%` }} /></div>
+                  <span className="faint" style={{ textAlign: 'right' }}>{file.status === 'skipped' ? 'had it' : file.status === 'done' ? 'done' : file.status === 'failed' ? 'failed' : `${pct}%`}</span>
                 </div>
-                <div className={`progress thin ${file.status === 'done' || file.status === 'skipped' ? 'good' : ''}`}><div style={{ width: `${file.size ? Math.round((file.downloaded / file.size) * 100) : 0}%` }} /></div>
-                <div className="pct faint" style={{ textAlign: 'right' }}>
-                  {file.status === 'skipped' ? 'Had it' : file.status === 'done' ? 'Done' : file.status === 'failed' ? 'Failed' : `${file.size ? Math.round((file.downloaded / file.size) * 100) : 0}%`}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
+      </div>
+      <div className="actions">
+        {(job.status === 'queued' || job.status === 'torbox' || job.status === 'downloading') && <button className="btn sm" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'pause'))}>Pause</button>}
+        {job.status === 'paused' && <button className="btn sm" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'resume'))}>Resume</button>}
+        {(job.status === 'failed' || job.status === 'cancelled') && <button className="btn sm" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'retry'))}>Retry</button>}
+        {ACTIVE.has(job.status)
+          ? <button className="btn sm danger" disabled={busy} onClick={() => run(() => api.jobAction(job.id, 'cancel'))}>Cancel</button>
+          : <button className="btn sm quiet" disabled={busy} onClick={() => run(() => api.removeJob(job.id))}>Remove</button>}
       </div>
     </div>
   );
@@ -150,55 +132,54 @@ function JobCard({ job, onChange }: { job: Job; onChange: () => void }) {
 export function Downloads() {
   const toast = useToast();
   const { data, error, reload, setData } = useAsync(() => api.downloads(), []);
-  const [filter, setFilter] = useState<Filter>('active');
+  const [chosen, setChosen] = useState<Filter | null>(null);
   usePolling(() => { api.downloads().then(setData, () => undefined); }, 1500);
 
   const jobs = data?.jobs ?? [];
   const counts = {
     active: jobs.filter((job) => ACTIVE.has(job.status)).length,
     done: jobs.filter((job) => job.status === 'completed').length,
-    failed: jobs.filter((job) => job.status === 'failed' || job.status === 'cancelled').length
+    stopped: jobs.filter((job) => job.status === 'failed' || job.status === 'cancelled').length
   };
-  const visible = jobs.filter((job) =>
-    filter === 'all' ? true
-      : filter === 'active' ? ACTIVE.has(job.status)
-        : filter === 'done' ? job.status === 'completed'
-          : job.status === 'failed' || job.status === 'cancelled');
-  const totalSpeed = jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0);
+  // Until a tab is picked, show what's running, or everything when nothing is.
+  const filter: Filter = chosen ?? (counts.active ? 'active' : 'all');
+  const visible = jobs.filter((job) => filter === 'all' ? true
+    : filter === 'active' ? ACTIVE.has(job.status)
+      : filter === 'done' ? job.status === 'completed'
+        : job.status === 'failed' || job.status === 'cancelled');
+  const rate = jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0);
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <h1 className="page-title">Downloads</h1>
-          <div className="page-sub">{counts.active ? `${counts.active} in progress${totalSpeed ? ` · ${speed(totalSpeed)}` : ''}` : 'Everything goes through TorBox. Nothing is torrented on your server.'}</div>
+          <div className="sub mono" style={{ fontSize: 12.5 }}>
+            {counts.active ? `${counts.active} active${rate ? ` · ${speed(rate)}` : ''}` : 'Torrents run on TorBox. This server only pulls finished files.'}
+          </div>
         </div>
         <div className="row">
-          <Segmented<Filter>
+          <Seg<Filter>
             value={filter}
-            onChange={setFilter}
+            onChange={setChosen}
             options={[
-              { value: 'active', label: `Active${counts.active ? ` ${counts.active}` : ''}` },
-              { value: 'done', label: `Done${counts.done ? ` ${counts.done}` : ''}` },
-              { value: 'failed', label: `Failed${counts.failed ? ` ${counts.failed}` : ''}` },
-              { value: 'all', label: 'All' }
+              { value: 'active', label: `ACTIVE ${counts.active}` },
+              { value: 'done', label: `DONE ${counts.done}` },
+              { value: 'stopped', label: `STOPPED ${counts.stopped}` },
+              { value: 'all', label: 'ALL' }
             ]}
           />
-          {(counts.done > 0) && (
-            <button className="btn sm ghost" onClick={async () => { await api.clearFinished(); reload(); toast('Cleared finished downloads'); }}>Clear finished</button>
-          )}
+          {counts.done > 0 && <button className="btn sm quiet" onClick={async () => { await api.clearFinished(); reload(); toast('Cleared finished downloads'); }}>Clear finished</button>}
         </div>
       </div>
       {error && <ErrorNote message={error} onRetry={reload} />}
       {!data && !error && <Loading />}
       {data && !visible.length && (
-        <Empty icon={<Download size={34} />} title={filter === 'active' ? 'Nothing downloading' : 'Nothing here yet'}>
-          {filter === 'active' ? <>Find something on <Link to="/" style={{ color: 'var(--accent)' }}>Discover</Link> and pick a season or a release.</> : null}
+        <Empty title={filter === 'active' ? 'Nothing downloading' : 'Nothing here'}>
+          {filter === 'active' ? <>Pick something on <Link to="/" className="accent">Discover</Link>.</> : null}
         </Empty>
       )}
-      <div className="jobs">
-        {visible.map((job) => <JobCard key={job.id} job={job} onChange={reload} />)}
-      </div>
+      {visible.length > 0 && <div className="jobs">{visible.map((job) => <JobRow key={job.id} job={job} onChange={reload} />)}</div>}
     </div>
   );
 }

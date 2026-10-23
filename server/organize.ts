@@ -128,7 +128,9 @@ export function planFiles(job: Job, files: TorboxFile[], naming: NamingOptions):
   };
 
   if (job.type === 'movie') {
-    const main = videos.sort((a, b) => b.size - a.size)[0];
+    // In a collection ("Dune 1 + 2"), prefer the file that carries this movie's year.
+    const ofYear = job.year ? videos.filter((file) => file.name.includes(String(job.year))) : [];
+    const main = (ofYear.length ? ofYear : videos).sort((a, b) => b.size - a.size)[0];
     if (!main) return [];
     const { dir, base } = movieBase(job, naming);
     result.push(makeFile(main, unique(dir, base, extensionOf(main.name)), 'video'));

@@ -1,4 +1,3 @@
-import { CheckCircle2, XCircle } from 'lucide-react';
 import {
   type AnchorHTMLAttributes, type MouseEvent, type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState
 } from 'react';
@@ -8,25 +7,36 @@ interface RouterValue {
   path: string;
   search: URLSearchParams;
   navigate: (to: string, options?: { replace?: boolean }) => void;
+  /** Goes back inside the app, or to `fallback` when the page was opened directly. */
+  back: (fallback?: string) => void;
 }
 
-const RouterContext = createContext<RouterValue>({ path: '/', search: new URLSearchParams(), navigate: () => undefined });
+const RouterContext = createContext<RouterValue>({ path: '/', search: new URLSearchParams(), navigate: () => undefined, back: () => undefined });
 
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [location, setLocation] = useState(() => ({ path: window.location.pathname, search: window.location.search }));
+  const depth = useRef(0);
   useEffect(() => {
-    const onPop = () => setLocation({ path: window.location.pathname, search: window.location.search });
+    const onPop = () => {
+      depth.current = Math.max(0, depth.current - 1);
+      setLocation({ path: window.location.pathname, search: window.location.search });
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
   const navigate = useCallback((to: string, options: { replace?: boolean } = {}) => {
     if (to === window.location.pathname + window.location.search) return;
     window.history[options.replace ? 'replaceState' : 'pushState'](null, '', to);
+    if (!options.replace) depth.current += 1;
     const url = new URL(to, window.location.origin);
     setLocation({ path: url.pathname, search: url.search });
     if (!options.replace) window.scrollTo({ top: 0 });
   }, []);
-  const value = useMemo(() => ({ path: location.path, search: new URLSearchParams(location.search), navigate }), [location, navigate]);
+  const back = useCallback((fallback = '/') => {
+    if (depth.current > 0) window.history.back();
+    else navigate(fallback);
+  }, [navigate]);
+  const value = useMemo(() => ({ path: location.path, search: new URLSearchParams(location.search), navigate, back }), [location, navigate, back]);
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
 }
 
@@ -65,10 +75,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((toast) => (
-          <div key={toast.id} className={`toast ${toast.kind === 'error' ? 'error' : ''}`}>
-            <span className="t-icon">{toast.kind === 'error' ? <XCircle size={18} /> : <CheckCircle2 size={18} />}</span>
-            <div>{toast.message}</div>
-          </div>
+          <div key={toast.id} className={`toast ${toast.kind === 'error' ? 'error' : ''}`}>{toast.message}</div>
         ))}
       </div>
     </ToastContext.Provider>

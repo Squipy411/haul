@@ -1,102 +1,106 @@
-<p align="center"><img src="web/public/icon.png" width="84" alt="Haul" /></p>
+# Haul
 
-<h1 align="center">Haul</h1>
+<img src="web/public/icon.png" width="56" align="right" alt="" />
 
-<p align="center"><b>Browse. Pick a season. It lands on your server.</b><br/>
-An all-in-one TorBox media downloader with a built-in Nuvio / Stremio library addon.<br/>
-No Sonarr, no Radarr, no Seerr, no rdt-client, no P2P on your server.</p>
+A self-hosted downloader for films and series that runs everything through [TorBox](https://torbox.app). Pick a title, choose a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your server, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
+
+It replaces a Sonarr + Radarr + Seerr + rdt-client stack for people who just want to choose what to download. Nothing is torrented on your own machine: TorBox fetches the torrent, Haul pulls the finished files over HTTPS.
 
 ![Discover](docs/screenshots/discover.jpg)
 
-## What it does
+## What you can do
 
-1. **Browse** a full movie and TV catalog (Cinemeta, no API key needed), with search, trending, new and top-rated rows.
-2. **Choose exactly what you want** for a show:
-   - **Download the whole season**: Haul grabs a season pack when a good one exists, otherwise every episode on its own, even when each episode is a separate torrent. Episodes you already have, and ones that haven't aired, are skipped. You see the plan (releases, size, how many are instant) before anything starts.
-   - **Pick a season pack**: compare every pack by quality, HDR, codec, audio, size and seeders. Multi-season packs work too; Haul only takes the season you asked for.
-   - **Single episodes**: open any episode and pick a release, or tick several and download just those.
-   - **Movies**: the same release list, best match first.
-3. **TorBox only.** Torrents are fetched by TorBox's servers. Haul then pulls the finished files to your server over HTTPS, a few at a time, with resume and retries. ⚡ *Instant* marks releases TorBox already has cached.
-4. **Clean library.** Files are renamed for Plex, Jellyfin and Nuvio, and existing show and season folders are reused:
-   ```
-   TV Shows/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E04 - Cancer Man - 1080p.mkv
-   Movies/Dune Part Two (2024)/Dune Part Two (2024) - 2160p.mkv
-   ```
-   Matching English subtitles are saved next to the video.
-5. **Your personal media addon, built in.** Haul hosts your whole library (including folders you had before) as a Stremio-compatible addon. Install one URL in Nuvio and you get *My Shows*, *My Movies* and *Recently added* catalogs, plus a "Haul" stream on any title you own, served straight from disk with seeking. This replaces the old Personal Media Addon / Nuvi-Flow.
+- **Browse and search** films and series (catalog from Cinemeta, no API key).
+- **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
+- **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. From a multi-season pack, only the season you asked for is downloaded.
+- **Pick single episodes**, or tick several and download just those.
+- **Films** get the same release table, best match first.
+- **Follow progress** through TorBox → server → library, with pause, retry and cancel.
+- **Host your library for Nuvio/Stremio**: catalogs for your series and films, and a "Haul" stream on any title you own, played straight from disk with seeking. This replaces Personal Media Addon / Nuvi-Flow.
 
-| Whole season | Season packs |
+| Season packs | Series page |
 | --- | --- |
-| ![Whole season plan](docs/screenshots/whole-season.jpg) | ![Season packs](docs/screenshots/season-packs.jpg) |
-| **Show page** | **Library + Nuvio addon** |
-| ![Show](docs/screenshots/show.jpg) | ![Library](docs/screenshots/library.jpg) |
+| ![Season packs](docs/screenshots/packs.jpg) | ![Series](docs/screenshots/show.jpg) |
+| **Library and Nuvio addon** | **Downloads** |
+| ![Library](docs/screenshots/library.jpg) | ![Downloads](docs/screenshots/downloads.jpg) |
 
-## Install on ZimaOS (ThinkStation)
+Files are saved like this, reusing show and season folders that already exist:
 
-Open the ZimaOS terminal, become root (`sudo -i`) and run:
+```
+TV Shows/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E04 - Cancer Man - 1080p.mkv
+Movies/Dune Part Two (2024)/Dune Part Two (2024) - 2160p.mkv
+```
+
+## Install on ZimaOS
+
+In the ZimaOS terminal, as root (`sudo -i`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Squipy411/haul/main/deploy/zimaos/install.sh | sh
 ```
 
-This builds the image on the server, installs it as a ZimaOS app called **Haul**, and starts it on port **60700**. Run the same command again to update.
+It builds the image on the server, registers Haul as a ZimaOS app (it appears on the dashboard) and starts it on port 60700. Run it again to update.
 
-- Dashboard: `http://<server-ip>:60700`
-- Settings and queue: `/DATA/AppData/haul/data`
-- Media: `/DATA/Media/Movies` and `/DATA/Media/TV Shows` (change in Settings → Folders)
+| | |
+| --- | --- |
+| Dashboard | `http://<server>:60700` |
+| Settings, queue, library index | `/DATA/AppData/haul/data` |
+| Media | `/DATA/Media/Movies` and `/DATA/Media/TV Shows` (changeable in Settings) |
 
-On first launch, paste your TorBox API key (torbox.app → Settings). That's the whole setup.
+On first open, paste your TorBox API key from torbox.app/settings.
 
-### Any other Docker host
+### Other Docker hosts
 
 ```bash
 docker run -d --name haul --restart unless-stopped -p 60700:60700 \
   -v ./haul-data:/data -v /path/to/Media:/media ghcr.io/squipy411/haul:latest
 ```
 
-or use [docker-compose.yml](docker-compose.yml). Optional environment variables: `TORBOX_API_KEY`, `PUID`/`PGID` (owner of new files), `PUBLIC_URL`, `MOVIES_DIR`, `TV_DIR`, `INCOMPLETE_DIR`.
+Or use [docker-compose.yml](docker-compose.yml). Optional environment: `TORBOX_API_KEY`, `PUID`/`PGID` (owner of new files), `PUBLIC_URL`, `MOVIES_DIR`, `TV_DIR`, `INCOMPLETE_DIR`.
 
 ## Windows app
 
-Download **Haul-Setup.exe** (installer) or **Haul-Portable.exe** from the [Releases](../../releases) page. Builds come from the *Windows app* workflow on every `v*` tag.
+<img src="docs/screenshots/windows-setup.jpg" width="420" align="right" alt="Windows app setup" />
 
-On first launch choose:
+Get **Haul-Setup.exe** or **Haul-Portable.exe** from [Releases](https://github.com/Squipy411/haul/releases). On first launch, choose:
 
-- **Connect to my Haul server**: the app is a window onto your ThinkStation (recommended).
-- **Run Haul on this PC**: the full server runs inside the app and downloads to your Videos folder.
+- **My Haul server**: a window onto the server on your ThinkStation.
+- **This PC**: Haul runs inside the app and downloads to your Videos folder.
 
-## Connect Nuvio
+*Haul → Change server…* in the menu switches later.
 
-Library → **Copy URL**, then in Nuvio: Settings → Addons → install from URL. Keep the URL private; it includes a secret token. If it leaks, Settings → Nuvio addon → **New URL**.
+<br clear="right" />
 
-If Nuvio reaches your server through a different address (Tailscale, a domain, HTTPS proxy), set Settings → Nuvio addon → *Public address* so stream links use it.
+## Nuvio
+
+Library → **Copy URL**, then in Nuvio: Settings → Addons → install from URL. The URL contains a private token; if it leaks, make a new one in Settings → Nuvio addon. If Nuvio reaches the server through another address (Tailscale, a domain), set that as the public address so stream links use it.
 
 ## Sources
 
-Torrentio is on by default. TorBox's own search is used when reachable, and you can add any Stremio addon that returns torrents (for example Comet or MediaFusion without debrid). All results are merged, de-duplicated and checked against TorBox's cache in one call.
+Torrentio is on by default. TorBox's own search is used when it answers, and you can add any Stremio addon that returns torrents (Comet or MediaFusion without debrid, for example). Results are merged, de-duplicated and checked against the TorBox cache in one request.
 
 ## Development
 
 ```bash
 npm install
-npm run dev          # API on :60700 and the dashboard on :5173
-npm test             # parser, file-picking and byte-range tests
-npm run build        # dist/server.mjs + dist/web
-npm run desktop      # run the desktop app
-npm run dist:win     # build the Windows installer
+npm run dev        # API on :60700, dashboard with hot reload on :5173
+npm test
+npm run build      # dist/server.mjs and dist/web
+npm run desktop    # Electron app from source
+npm run dist:win   # Windows installer (on Windows; use dist:win:mac on a Mac)
 ```
 
-The server has no runtime dependencies: one bundled `dist/server.mjs` on Node 22+. State is kept in small JSON files in the data folder.
+The server is one bundled file with no runtime dependencies (Node 22+). State lives in small JSON files in the data folder.
 
-| Path | What it is |
+| Path | |
 | --- | --- |
-| `server/search.ts` | Gathers torrents, checks the TorBox cache, ranks them and plans whole seasons |
-| `server/jobs.ts` | Download queue: TorBox → server → library |
-| `server/organize.ts` | Picks the right files from a pack and names them |
+| `server/search.ts` | Gathers torrents, checks the TorBox cache, ranks releases, plans whole seasons |
+| `server/jobs.ts` | The queue: TorBox → server → library |
+| `server/organize.ts` | Picks the right files out of a torrent and names them |
 | `server/library.ts`, `server/addon.ts` | Library scanner and the Nuvio/Stremio addon |
-| `web/src` | React dashboard |
-| `desktop` | Electron shell for the Windows app |
+| `web/src` | Dashboard (React) |
+| `desktop` | Windows app (Electron) |
 
 ## Credits
 
-Byte-range streaming and the library-addon design come from [Personal Media Addon](https://github.com/Squipy411/personal-media-addon) (MIT). Catalog data comes from Cinemeta. Haul is not affiliated with TorBox, Nuvio or Stremio. Only download what you have the right to.
+Byte-range streaming and the addon design come from [Personal Media Addon](https://github.com/Squipy411/personal-media-addon) (MIT). Catalog data from Cinemeta. Not affiliated with TorBox, Nuvio or Stremio. Download only what you have the right to.
