@@ -145,15 +145,54 @@ Upcoming → **Add to calendar** gives you a private calendar address. On an iPh
 
 Library → **Copy URL**, then in Nuvio: Settings → Addons → install from URL (in Stremio, use *Open in Stremio*). The URL contains a private token; if it leaks, make a new one in Settings → Nuvio addon. If Nuvio reaches Haul through a different address than your browser does (Tailscale, a domain), set it under *Public address* so stream links use it.
 
+## Use Haul from anywhere
+
+Haul can have a free address like `https://haul.tail1a2b3c.ts.net` that opens on your phone anywhere, with a proper HTTPS certificate and no changes to your router. It comes from [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), which is free for personal use.
+
+**Before you start:** in Haul, open **Settings → Sign-in and security**, make sure the password is long (12+ characters), and turn on **two-step sign-in**. Then a stolen or guessed password alone isn't enough to get in.
+
+### ZimaOS
+
+1. Make a free account at [tailscale.com](https://tailscale.com), then create an auth key at [Settings → Keys](https://login.tailscale.com/admin/settings/keys).
+2. In [DNS settings](https://login.tailscale.com/admin/dns), turn on **HTTPS Certificates**.
+3. In the ZimaOS terminal, as root:
+
+   ```bash
+   sh /DATA/AppData/haul/src/deploy/zimaos/remote.sh tskey-auth-PASTE-YOURS
+   ```
+
+   It starts Tailscale next to Haul and prints your address. If `docker exec haul-tailscale tailscale funnel status` says Funnel isn't enabled for your account, open the link it prints once.
+
+### Docker
+
+Use [deploy/tailscale/docker-compose.yml](deploy/tailscale/docker-compose.yml) (with its `serve.json`) instead of the plain compose file: `TS_AUTHKEY=tskey-auth-… docker compose up -d`.
+
+### Windows app
+
+Install [Tailscale](https://tailscale.com/download/windows), set a password in Haul's Settings (and two-step sign-in), then in PowerShell: `tailscale funnel --bg 60700`.
+
+### Other ways
+
+- **Only your own devices:** set `"AllowFunnel"` to `false` in `serve.json` (on ZimaOS, `/DATA/AppData/haul/remote/serve.json`) and restart the container with `docker restart haul-tailscale`. The same `https://…ts.net` address then opens only on devices signed in to your Tailscale (install the Tailscale app on your phone). The most private option.
+- **Cloudflare Tunnel:** free if you have a domain on Cloudflare. To try it without one, `docker run --rm --network haul_default cloudflare/cloudflared tunnel --url http://haul:60700` prints a temporary `trycloudflare.com` address.
+- **A reverse proxy** (Caddy, Nginx Proxy Manager) with a free [DuckDNS](https://www.duckdns.org) name works too, but needs ports forwarded on your router. Only ever forward HTTPS, never Haul's port 60700 directly.
+
+Away from home, Nuvio can use the same address: open Settings → Nuvio and Stremio from your new address and copy the addon address shown there.
+
+**Lost the phone with your codes?** Start Haul once with the environment variable `HAUL_RESET_TWO_FACTOR=1` (or set `"totpSecret": ""` in `settings.json` in Haul's data folder and restart), sign in with the password, set it up again, then remove the variable.
+
 ## Security
 
 - Server installs require a password, created during setup. Until then, only the setup page answers.
-- Sessions last 30 days and end on every device when the password changes. Repeated wrong passwords are slowed down.
+- **Two-step sign-in** (optional): the password plus a 6-digit code from an authenticator app. Password and code are checked together, so a wrong guess never learns which part was wrong, and each code works once.
+- Sessions last 30 days and end on every device when the password changes, or with **Sign out everywhere else**. Over HTTPS the session cookie is marked Secure, and browsers are told to stick to HTTPS.
+- Wrong passwords are slowed down per address (30 s after five, doubling to 15 minutes) and for everyone after 30 in 15 minutes, so guessing from many addresses doesn't work either. Behind a tunnel or proxy, Haul uses the visitor's real address from the proxy, which visitors can't forge.
+- With notifications on, Haul tells your phone about every new sign-in (device and address) and when an address is paused for wrong passwords.
 - Every change request carries a header that other websites cannot send, so a malicious page can't act through your signed-in browser.
 - The TorBox key stays on the server. The dashboard only ever sees its last four characters.
 - The Nuvio addon and its stream links use separate secrets: a private addon URL, and per-file links that are signed and expire after 48 hours.
 - The Windows app keeps "This PC" mode on `127.0.0.1` unless you choose to share it. Its window signs itself in; other devices need a password you set in Settings.
-- Haul serves plain HTTP. To use it from outside your home network, put it behind a VPN such as Tailscale or an HTTPS reverse proxy rather than forwarding the port.
+- Haul serves plain HTTP. To use it from outside your home network, use [an HTTPS tunnel](#use-haul-from-anywhere) or a VPN rather than forwarding the port. Never use `HAUL_AUTH=none` on an address the internet can reach.
 
 Found a problem? Open an issue, or for anything sensitive, contact the maintainer privately through GitHub.
 

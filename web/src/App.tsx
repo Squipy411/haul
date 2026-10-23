@@ -293,7 +293,7 @@ export function App() {
       : <Loading />;
   }
   if (status.needsPassword) return <Suspense fallback={<Loading />}><Setup createPassword onDone={refresh} /></Suspense>;
-  if (!status.authenticated) return <Suspense fallback={<Loading />}><Login onDone={refresh} desktop={status.desktop} passwordSet={status.passwordSet} /></Suspense>;
+  if (!status.authenticated) return <Suspense fallback={<Loading />}><Login onDone={refresh} desktop={status.desktop} passwordSet={status.passwordSet} twoFactor={status.twoFactor} /></Suspense>;
   if (!status.setupComplete) return <Suspense fallback={<Loading />}><Setup createPassword={false} onDone={refresh} /></Suspense>;
 
   // The player takes the whole screen, without the sidebar.

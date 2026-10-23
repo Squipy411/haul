@@ -647,3 +647,11 @@ a.episode-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 @media (hover: none) { .hide-touch, .player-menu-rule { display: none; } }
 .player-end { background: rgba(0, 0, 0, 0.72); animation: fade 0.3s ease-out; } /* taste-skill-ignore: neutral scrim over the last frame */
 
+
+/* ---------- two-step sign-in setup ---------- */
+.two-factor-setup { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 22px; align-items: start; }
+.two-factor-setup .qr { display: block; border-radius: 10px; }
+.two-factor-setup .steps { display: grid; gap: 14px; margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.two-factor-setup .steps li::marker { color: var(--faint); }
+.code-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--text); letter-spacing: 0.04em; word-break: break-all; user-select: all; }
+@media (max-width: 600px) { .two-factor-setup { grid-template-columns: 1fr; justify-items: start; } }

@@ -106,11 +106,15 @@ export interface Settings {
     discordWebhook: string;
     downloadFinished: boolean;
     downloadFailed: boolean;
+    /** A new device signed in, or an address was paused for wrong passwords. */
+    signIns: boolean;
   };
   passwordSet: boolean;
+  /** Signing in also asks for a code from an authenticator app. */
+  twoFactor: boolean;
 }
 
-export type SettingsPatch = Partial<Omit<Settings, 'passwordSet' | 'sources' | 'quality' | 'downloads' | 'addon' | 'library' | 'notifications'>> & {
+export type SettingsPatch = Partial<Omit<Settings, 'passwordSet' | 'twoFactor' | 'sources' | 'quality' | 'downloads' | 'addon' | 'library' | 'notifications'>> & {
   sources?: Partial<Settings['sources']>;
   quality?: Partial<Settings['quality']>;
   downloads?: Partial<Settings['downloads']>;
@@ -139,6 +143,10 @@ export interface Status {
   torboxConfigured: boolean;
   /** TorBox refused the saved key the last time Haul used it (reset or expired). */
   torboxRefused?: boolean;
+  /** Signing in asks for an authenticator code too (the sign-in page shows the box). */
+  twoFactor: boolean;
+  /** How this browser reaches Haul: over HTTPS, and from the internet rather than the home network. */
+  access?: { https: boolean; fromInternet: boolean };
   activeDownloads: number;
   /** Bytes per second across downloads to this machine right now. */
   transferSpeed: number;

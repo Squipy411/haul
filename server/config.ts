@@ -19,7 +19,7 @@ export interface ServerOptions {
   owner?: { uid: number; gid: number };
 }
 
-export const VERSION = '1.9.4';
+export const VERSION = '1.10.0';
 
 function numberEnv(name: string): number | undefined {
   const value = Number(process.env[name]);

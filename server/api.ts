@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Meta, MediaType, NewEpisodes, Release, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
 import { addonUrls } from './addon.js';
-import { type Auth, clientIp, validPassword } from './auth.js';
+import { type Auth, clientIp, describeDevice, isFromInternet, isHttps, validPassword } from './auth.js';
+import { checkCode, newSecret, otpauthUrl } from './totp.js';
 import * as catalog from './catalog.js';
 import { type ServerOptions, VERSION } from './config.js';
 import { type Context, HttpError, type Router } from './http.js';
@@ -83,6 +84,8 @@ export function registerApi(router: Router, deps: Deps): void {
       setupComplete: Boolean(settings.value.torboxApiKey) && !auth.locked,
       torboxConfigured: torbox.configured,
       torboxRefused: authenticated ? torbox.refused : false,
+      twoFactor: Boolean(value.totpSecret),
+      access: authenticated ? { https: isHttps(ctx), fromInternet: isFromInternet(ctx) } : undefined,
       // Signed-out visitors learn nothing about the library or queue.
       activeDownloads: authenticated ? jobs.activeCount() : 0,
       transferSpeed: authenticated ? jobs.jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0) : 0,
@@ -95,6 +98,25 @@ export function registerApi(router: Router, deps: Deps): void {
 
   router.get('/api/status', async (ctx) => ctx.json(200, await status(ctx), { 'Cache-Control': 'no-store' }));
 
+  // --- Signing in ----------------------------------------------------------------
+  const tell = (title: string, message: string, priority: number, tags: string[]) => {
+    if (notifier.configured && settings.value.notifications.signIns) void notifier.send({ title, message, path: '/settings', priority, tags });
+  };
+  /** A wrong password counts toward the pause; the owner hears when an address gets paused. */
+  const wrongPassword = (ip: string) => {
+    if (auth.recordFailure(ip)) tell('Haul paused sign-ins from one address', `5 wrong passwords in a row from ${ip}. If that wasn't you, turn on two-step sign-in in Settings.`, 4, ['warning']);
+  };
+  /** For changes to sign-in itself: the current password again, with the same limits as signing in. */
+  const confirmPassword = (ctx: Context, password: unknown) => {
+    const ip = clientIp(ctx);
+    if (auth.waitFor(ip) > 0) throw new HttpError(429, 'Too many attempts. Wait a moment.');
+    if (!settings.value.passwordHash) throw new HttpError(400, 'Set a password first.');
+    if (typeof password !== 'string' || !settings.checkPassword(password)) {
+      wrongPassword(ip);
+      throw new HttpError(401, 'Your password is wrong.');
+    }
+  };
+
   router.post('/api/login', async (ctx) => {
     const ip = clientIp(ctx);
     const wait = auth.waitFor(ip);
@@ -103,13 +125,57 @@ export function registerApi(router: Router, deps: Deps): void {
     if (!settings.value.passwordHash) {
       return ctx.json(400, { error: options.desktop ? 'No password is set. Set one in the Haul app under Settings → Password to sign in from other devices.' : 'Finish setup first.' });
     }
-    if (typeof body.password !== 'string' || !settings.checkPassword(body.password)) {
-      auth.recordFailure(ip);
+    // Password and code are checked together and fail together, so a guess never learns which was wrong.
+    const secret = settings.value.totpSecret;
+    const passwordOk = typeof body.password === 'string' && settings.checkPassword(body.password);
+    const step = secret ? checkCode(secret, body.code, Date.now(), settings.value.totpUsedStep) : 0;
+    if (!passwordOk || step === null) {
+      wrongPassword(ip);
       await new Promise((resolve) => setTimeout(resolve, 500));
-      return ctx.json(401, { error: 'Wrong password' });
+      return ctx.json(401, { error: secret ? 'Wrong password or code.' : 'Wrong password' });
     }
+    if (secret) settings.setTotp({ usedStep: step });
     auth.recordSuccess(ip);
     auth.startSession(ctx);
+    tell('New sign-in to Haul', `${describeDevice(String(ctx.req.headers['user-agent'] ?? ''))} from ${ip}${isFromInternet(ctx) ? ', over the internet' : ''}`, 3, ['key']);
+    ctx.json(200, { ok: true });
+  });
+
+  // --- Two-step sign-in ----------------------------------------------------------------
+  router.post('/api/two-factor/start', async (ctx) => {
+    const body = await ctx.body();
+    confirmPassword(ctx, body.password);
+    const secret = newSecret();
+    settings.setTotp({ pending: secret });
+    // The address in the label tells two Hauls apart in the authenticator app.
+    ctx.json(200, { secret, url: otpauthUrl(secret, new URL(ctx.baseUrl).hostname) });
+  });
+
+  router.post('/api/two-factor/confirm', async (ctx) => {
+    const body = await ctx.body();
+    const pending = settings.value.totpPending;
+    if (!pending) throw new HttpError(400, 'Start again: press Set up.');
+    const step = checkCode(pending, body.code);
+    if (step === null) throw new HttpError(400, "That code didn't match. Type the newest one, and check your phone's clock is set automatically.");
+    settings.setTotp({ secret: pending, pending: '', usedStep: step });
+    ctx.json(200, { ok: true });
+  });
+
+  router.post('/api/two-factor/off', async (ctx) => {
+    const body = await ctx.body();
+    confirmPassword(ctx, body.password);
+    if (settings.value.totpSecret && checkCode(settings.value.totpSecret, body.code) === null) {
+      wrongPassword(clientIp(ctx));
+      throw new HttpError(401, "That code didn't match.");
+    }
+    settings.setTotp({ secret: '', pending: '', usedStep: -1 });
+    ctx.json(200, { ok: true });
+  });
+
+  router.post('/api/sessions/end-others', (ctx) => {
+    settings.newSessionGeneration();
+    // This browser stays signed in; the Windows app's own window was never a password session.
+    if (ctx.cookies.haul_session?.startsWith('p.')) auth.startSession(ctx);
     ctx.json(200, { ok: true });
   });
 
@@ -164,7 +230,7 @@ export function registerApi(router: Router, deps: Deps): void {
     if (settings.value.passwordHash) {
       if (auth.waitFor(ip) > 0) throw new HttpError(429, 'Too many attempts. Wait a moment.');
       if (typeof body.current !== 'string' || !settings.checkPassword(body.current)) {
-        auth.recordFailure(ip);
+        wrongPassword(ip);
         throw new HttpError(401, 'Current password is wrong.');
       }
       auth.recordSuccess(ip);

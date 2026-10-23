@@ -4,12 +4,18 @@ import type { Settings, SettingsPatch } from '../shared/types.js';
 import type { ServerOptions } from './config.js';
 import { JsonFile } from './store.js';
 
-interface StoredSettings extends Omit<Settings, 'passwordSet'> {
+interface StoredSettings extends Omit<Settings, 'passwordSet' | 'twoFactor'> {
   passwordHash: string;
   sessionSecret: string;
   streamSecret: string;
   /** Private part of the calendar feed address. */
   calendarToken: string;
+  /** Moves on with "Sign out everywhere", which ends every password session. */
+  sessionGeneration: number;
+  /** Two-step sign-in: the authenticator secret ('' when off), one being set up, and the last code step used. */
+  totpSecret: string;
+  totpPending: string;
+  totpUsedStep: number;
 }
 
 export const MASK = '••••••••';
@@ -64,12 +70,17 @@ function defaults(options: ServerOptions): StoredSettings {
       ntfyToken: '',
       discordWebhook: '',
       downloadFinished: true,
-      downloadFailed: true
+      downloadFailed: true,
+      signIns: true
     },
     passwordHash: '',
     sessionSecret: randomToken(32),
     streamSecret: randomToken(32),
-    calendarToken: randomToken(18)
+    calendarToken: randomToken(18),
+    sessionGeneration: 0,
+    totpSecret: '',
+    totpPending: '',
+    totpUsedStep: -1
   };
 }
 
@@ -116,6 +127,10 @@ export class SettingsService {
     data.notifications = { ...base.notifications, ...data.notifications };
     if (!data.torboxApiKey && options.defaults.torboxApiKey) data.torboxApiKey = options.defaults.torboxApiKey;
     data.calendarToken ||= randomToken(18);
+    data.sessionGeneration ??= 0;
+    data.totpSecret ??= '';
+    data.totpPending ??= '';
+    data.totpUsedStep ??= -1;
     this.file.flush();
   }
 
@@ -128,13 +143,14 @@ export class SettingsService {
   }
 
   publicView(): Settings {
-    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, ...rest } = this.file.data;
+    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, sessionGeneration: _generation, totpSecret, totpPending: _pending, totpUsedStep: _used, ...rest } = this.file.data;
     const key = rest.torboxApiKey;
     return {
       ...rest,
       notifications: { ...rest.notifications, ntfyToken: rest.notifications.ntfyToken ? `${MASK}${rest.notifications.ntfyToken.slice(-4)}` : '' },
       torboxApiKey: key ? `${MASK}${key.slice(-4)}` : '',
-      passwordSet: Boolean(passwordHash)
+      passwordSet: Boolean(passwordHash),
+      twoFactor: Boolean(totpSecret)
     };
   }
 
@@ -190,6 +206,7 @@ export class SettingsService {
       }
       if (typeof notifications.downloadFinished === 'boolean') data.notifications.downloadFinished = notifications.downloadFinished;
       if (typeof notifications.downloadFailed === 'boolean') data.notifications.downloadFailed = notifications.downloadFailed;
+      if (typeof notifications.signIns === 'boolean') data.notifications.signIns = notifications.signIns;
     }
     if (patch.library?.rescanMinutes !== undefined) data.library.rescanMinutes = clampNumber(patch.library.rescanMinutes, 0, 1440, 30);
     this.file.flush();
@@ -209,6 +226,20 @@ export class SettingsService {
 
   regenerateCalendarToken(): void {
     this.file.data.calendarToken = randomToken(18);
+    this.file.flush();
+  }
+
+  /** Ends every password session (the next sign-in starts a new generation). */
+  newSessionGeneration(): void {
+    this.file.data.sessionGeneration += 1;
+    this.file.flush();
+  }
+
+  /** Two-step sign-in: a secret being set up, turning it on with the first good code, and off. */
+  setTotp(change: { pending?: string; secret?: string; usedStep?: number }): void {
+    if (change.pending !== undefined) this.file.data.totpPending = change.pending;
+    if (change.secret !== undefined) this.file.data.totpSecret = change.secret;
+    if (change.usedStep !== undefined) this.file.data.totpUsedStep = change.usedStep;
     this.file.flush();
   }
 

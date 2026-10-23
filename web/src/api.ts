@@ -79,7 +79,11 @@ export function preparePlay(target: { type: MediaType; imdbId: string; season?: 
 
 export const api = {
   status: () => request<Status>('GET', '/api/status'),
-  login: (password: string) => request<{ ok: true }>('POST', '/api/login', { password }),
+  login: (password: string, code?: string) => request<{ ok: true }>('POST', '/api/login', { password, code }),
+  twoFactorStart: (password: string) => request<{ secret: string; url: string }>('POST', '/api/two-factor/start', { password }),
+  twoFactorConfirm: (code: string) => request<{ ok: true }>('POST', '/api/two-factor/confirm', { code }),
+  twoFactorOff: (password: string, code: string) => request<{ ok: true }>('POST', '/api/two-factor/off', { password, code }),
+  endOtherSessions: () => request<{ ok: true }>('POST', '/api/sessions/end-others'),
   logout: () => request<{ ok: true }>('POST', '/api/logout'),
 
   settings: () => request<Settings>('GET', '/api/settings'),

@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { encode } from 'uqr';
 import type { AddonInfo, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
-import { ErrorNote, Loading, Picker, Toggle } from '../components/ui';
+import { ErrorNote, Loading, Picker, Sheet, Toggle } from '../components/ui';
 import { copyText, useAsync, useToast } from '../lib';
 
 function Section({ title, description, children }: { title: string; description: ReactNode; children: ReactNode }) {
@@ -54,7 +54,7 @@ function ListEditor({ id, values, onChange, placeholder }: { id: string; values:
 }
 
 /** A QR code for the phone to scan, drawn as one SVG path. */
-function QrCode({ text, size = 132 }: { text: string; size?: number }) {
+function QrCode({ text, size = 132, label = 'QR code for the notification topic' }: { text: string; size?: number; label?: string }) {
   const path = useMemo(() => {
     const { data } = encode(text, { border: 2 });
     let d = '';
@@ -62,7 +62,7 @@ function QrCode({ text, size = 132 }: { text: string; size?: number }) {
     return { d, size: data.length };
   }, [text]);
   return (
-    <svg className="qr" width={size} height={size} viewBox={`0 0 ${path.size} ${path.size}`} role="img" aria-label="QR code for the notification topic" shapeRendering="crispEdges">
+    <svg className="qr" width={size} height={size} viewBox={`0 0 ${path.size} ${path.size}`} role="img" aria-label={label} shapeRendering="crispEdges">
       <rect width={path.size} height={path.size} fill="#fff" />
       <path d={path.d} fill="#000" />
     </svg>
@@ -72,13 +72,76 @@ function QrCode({ text, size = 132 }: { text: string; size?: number }) {
 const newTopic = () => `haul-${Array.from(crypto.getRandomValues(new Uint8Array(9)), (byte) => byte.toString(36).padStart(2, '0')).join('').slice(0, 16)}`; // taste-skill-ignore: random bytes, not labels
 const DISCORD = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//;
 
-function PasswordSection({ passwordSet }: { passwordSet: boolean }) {
+const REMOTE_GUIDE = 'https://github.com/Squipy411/haul#use-haul-from-anywhere';
+
+/** Turning on two-step sign-in: the password again, then a QR code to scan and the first code to confirm. */
+function TwoFactorSheet({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [password, setPassword] = useState('');
+  const [setup, setSetup] = useState<{ secret: string; url: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError('');
+    try { await action(); } catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
+  };
+  const start = () => run(async () => { setSetup(await api.twoFactorStart(password)); setPassword(''); });
+  const confirm = () => run(async () => {
+    await api.twoFactorConfirm(code.replace(/\s/g, ''));
+    toast('Two-step sign-in is on');
+    onDone();
+    onClose();
+  });
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title="Set up two-step sign-in"
+      description="Signing in will also ask for a 6-digit code from an authenticator app on your phone: Google Authenticator, Microsoft Authenticator, 1Password, or the iPhone's Passwords app."
+      footer={setup
+        ? <><span className="hint">Codes change every 30 seconds.</span><button className="btn primary" disabled={busy || code.replace(/\s/g, '').length !== 6} onClick={confirm}>{busy && <span className="spinner" />}Turn on</button></>
+        : <><span /><button className="btn primary" disabled={busy || !password} onClick={start}>{busy && <span className="spinner" />}Continue</button></>}
+    >
+      {!setup ? (
+        <form onSubmit={(event) => { event.preventDefault(); if (password) void start(); }}>
+          <Field id="tf-password" label="Your Haul password">
+            <input id="tf-password" className="input" type="password" autoComplete="current-password" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} />
+          </Field>
+        </form>
+      ) : (
+        <div className="two-factor-setup">
+          <a href={setup.url} aria-label="Open in an authenticator app on this device"><QrCode text={setup.url} size={180} label="QR code to add Haul to an authenticator app" /></a>
+          <ol className="steps">
+            <li>In the authenticator app, add an account and scan this code. On a phone, tap the code instead.</li>
+            <li>No camera? Enter this key by hand: <span className="code-key">{setup.secret.match(/.{1,4}/g)!.join(' ')}</span> <button className="btn ghost sm" onClick={async () => { if (await copyText(setup.secret)) toast('Key copied'); }}>Copy</button></li>
+            <li>
+              <Field id="tf-code" label="Type the code the app shows">
+                <input id="tf-code" className="input code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} placeholder="123 456" autoFocus value={code} onChange={(event) => setCode(event.target.value.replace(/[^0-9 ]/g, ''))} onKeyDown={(event) => { if (event.key === 'Enter' && code.replace(/\s/g, '').length === 6) void confirm(); }} />
+              </Field>
+            </li>
+          </ol>
+        </div>
+      )}
+      {error && <div className="notice negative" role="alert" style={{ marginTop: 12 }}>{error}</div>}
+    </Sheet>
+  );
+}
+
+const settingsChanged = () => window.dispatchEvent(new Event('haul:settings-changed'));
+
+function SecuritySection({ passwordSet, twoFactor }: { passwordSet: boolean; twoFactor: boolean }) {
   const toast = useToast();
   const [status, setStatus] = useState<Status | null>(null);
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.status().then(setStatus, () => undefined); }, [passwordSet]);
+  const [settingUp, setSettingUp] = useState(false);
+  const [turningOff, setTurningOff] = useState(false);
+  const [offPassword, setOffPassword] = useState('');
+  const [offCode, setOffCode] = useState('');
+  useEffect(() => { api.status().then(setStatus, () => undefined); }, [passwordSet, twoFactor]);
 
   const run = async (action: () => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -86,8 +149,11 @@ function PasswordSection({ passwordSet }: { passwordSet: boolean }) {
       await action();
       setCurrent('');
       setNext('');
+      setOffPassword('');
+      setOffCode('');
+      setTurningOff(false);
       toast(done);
-      window.dispatchEvent(new Event('haul:settings-changed'));
+      settingsChanged();
     } catch (failure) {
       toast((failure as Error).message, 'error');
     } finally {
@@ -95,20 +161,30 @@ function PasswordSection({ passwordSet }: { passwordSet: boolean }) {
     }
   };
 
+  const access = status?.access;
+  const host = window.location.host;
   return (
     <Section
-      title="Password"
+      title="Sign-in and security"
       description={status?.desktop
         ? 'The app signs its own window in. Set a password to open Haul from a phone or another computer.'
-        : 'Anyone who opens Haul needs it. Changing it signs out every other device; the Nuvio addon keeps working.'}
+        : <>Anyone who opens Haul needs the password. To open Haul from anywhere, give it a free HTTPS address with Tailscale Funnel: <a href={REMOTE_GUIDE} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>how to</a>.</>}
     >
+      {access && (
+        access.fromInternet && !access.https
+          ? <div className="notice negative">You're reaching Haul from the internet without HTTPS, so your password travels unencrypted. Use a tunnel such as Tailscale Funnel instead of opening a port.</div>
+          : access.fromInternet
+            ? <div className={`notice ${twoFactor ? 'positive' : 'warning'}`}>Connected from the internet over HTTPS ({host}).{twoFactor ? ' Two-step sign-in is on.' : ' Turn on two-step sign-in below, so a password alone can\'t get in.'}</div>
+            : <div className="notice">Connected on your own network{access.https ? ' over HTTPS' : ''} ({host}).</div>
+      )}
+
       <div className="two">
         {passwordSet && (
           <Field id="pw-current" label="Current password">
             <input id="pw-current" className="input" type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} />
           </Field>
         )}
-        <Field id="pw-next" label={passwordSet ? 'New password' : 'Password'} hint="At least 8 characters">
+        <Field id="pw-next" label={passwordSet ? 'New password' : 'Password'} hint="At least 8 characters; 12 or more if Haul is reachable from the internet. Changing it signs out every other device; the Nuvio addon keeps working.">
           <input id="pw-next" className="input" type="password" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} />
         </Field>
       </div>
@@ -116,10 +192,41 @@ function PasswordSection({ passwordSet }: { passwordSet: boolean }) {
         <button className="btn" disabled={busy || next.length < 8 || (passwordSet && !current)} onClick={() => run(() => api.changePassword(current, next), passwordSet ? 'Password changed' : 'Password set')}>
           {passwordSet ? 'Change password' : 'Set password'}
         </button>
-        {passwordSet && status?.canRemovePassword && <button className="btn danger" disabled={busy || !current} onClick={() => run(() => api.changePassword(current, null), 'Password removed')}>Remove password</button>}
+        {passwordSet && status?.canRemovePassword && !twoFactor && <button className="btn danger" disabled={busy || !current} onClick={() => run(() => api.changePassword(current, null), 'Password removed')}>Remove password</button>}
+      </div>
+
+      {passwordSet && (
+        <>
+          <div className="switch-row">
+            <b>Two-step sign-in</b>
+            {twoFactor
+              ? <button className="btn sm" onClick={() => setTurningOff((value) => !value)} aria-expanded={turningOff}>Turn off</button>
+              : <button className="btn sm" onClick={() => setSettingUp(true)}>Set up</button>}
+            <small>{twoFactor ? 'On. Signing in asks for the password and a code from your authenticator app.' : 'Signing in also asks for a 6-digit code from an app on your phone. Worth turning on before Haul is reachable from the internet.'}</small>
+          </div>
+          {turningOff && (
+            <div className="two">
+              <Field id="tf-off-password" label="Password">
+                <input id="tf-off-password" className="input" type="password" autoComplete="current-password" value={offPassword} onChange={(event) => setOffPassword(event.target.value)} />
+              </Field>
+              <Field id="tf-off-code" label="Code from the app">
+                <input id="tf-off-code" className="input code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={offCode} onChange={(event) => setOffCode(event.target.value.replace(/[^0-9 ]/g, ''))} />
+              </Field>
+              <div><button className="btn danger" disabled={busy || !offPassword || offCode.replace(/\s/g, '').length !== 6} onClick={() => run(() => api.twoFactorOff(offPassword, offCode.replace(/\s/g, '')), 'Two-step sign-in is off')}>Turn off two-step sign-in</button></div>
+            </div>
+          )}
+          <div className="switch-row">
+            <b>Signed in somewhere you shouldn't be?</b>
+            <button className="btn sm" disabled={busy} onClick={() => run(() => api.endOtherSessions(), 'Every other device is signed out')}>Sign out everywhere else</button>
+            <small>Ends every session except this one. Phones and browsers need the password again.</small>
+          </div>
+        </>
+      )}
+      <div className="row" style={{ flexWrap: 'wrap' }}>
         <span className="grow" />
         {passwordSet && !status?.desktop && <button className="btn ghost" onClick={async () => { await api.logout(); window.location.assign('/'); }}>Sign out</button>}
       </div>
+      {settingUp && <TwoFactorSheet onClose={() => setSettingUp(false)} onDone={settingsChanged} />}
     </Section>
   );
 }
@@ -324,6 +431,7 @@ export function SettingsPage() {
           <div className="divider" />
           <SwitchRow title="When a download finishes" checked={draft.notifications.downloadFinished} onChange={(downloadFinished) => setNotify({ downloadFinished })} />
           <SwitchRow title="When a download fails" checked={draft.notifications.downloadFailed} onChange={(downloadFailed) => setNotify({ downloadFailed })} />
+          <SwitchRow title="New sign-ins" description="Each time a device signs in, and when an address is paused for wrong passwords." checked={draft.notifications.signIns} onChange={(signIns) => setNotify({ signIns })} />
         </Section>
 
         <Section title="Watching" description="Press play on any title or episode. Haul plays your own file when it has one, and otherwise streams the best version TorBox already has.">
@@ -361,7 +469,7 @@ export function SettingsPage() {
           )}
         </Section>
 
-        <PasswordSection passwordSet={draft.passwordSet} />
+        <SecuritySection passwordSet={draft.passwordSet} twoFactor={draft.twoFactor} />
       </div>
 
       {dirty && (

@@ -3,7 +3,7 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { registerAddon } from './addon.js';
 import { OPEN_ROUTES, registerApi } from './api.js';
-import { Auth } from './auth.js';
+import { Auth, isHttps } from './auth.js';
 import { type ServerOptions, VERSION, optionsFromEnv } from './config.js';
 import { type Context, HttpError, Router, compressSync, parseCookies, pickEncoding, readBody, requestBaseUrl, serveStatic } from './http.js';
 import { JobManager } from './jobs.js';
@@ -42,6 +42,11 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   fs.mkdirSync(options.dataDir, { recursive: true });
 
   const settings = new SettingsService(options);
+  // Lost the phone with the authenticator on it: start once with HAUL_RESET_TWO_FACTOR=1.
+  if (process.env.HAUL_RESET_TWO_FACTOR === '1' && settings.value.totpSecret) {
+    settings.setTotp({ secret: '', pending: '', usedStep: -1 });
+    console.log('[haul] two-step sign-in is off (HAUL_RESET_TWO_FACTOR). Set it up again in Settings, then remove the variable.');
+  }
   const auth = new Auth(settings, options.auth);
   const updates = new UpdateChecker();
   const torbox = new Torbox(() => settings.value.torboxApiKey);
@@ -96,6 +101,8 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       },
       baseUrl: requestBaseUrl(req)
     };
+    // Reached over HTTPS: browsers stick to HTTPS for this address from now on.
+    if (isHttps(ctx)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     try {
       if (req.method === 'OPTIONS') {
         res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS' });
