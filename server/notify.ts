@@ -5,6 +5,8 @@ export interface Note {
   message: string;
   /** Path inside Haul to open when the notification is tapped, e.g. /title/series/tt7587890?season=8 */
   path?: string;
+  /** Or a full address to open instead. */
+  url?: string;
   /** 1 (min) to 5 (urgent), ntfy's scale. */
   priority?: number;
   tags?: string[];
@@ -30,7 +32,7 @@ export class Notifier {
   async send(note: Note): Promise<{ ok: boolean; error?: string }> {
     if (!this.configured) return { ok: false, error: 'Notifications are off. Turn them on in Settings.' };
     const n = this.settings.value.notifications;
-    const link = this.link(note.path);
+    const link = note.url ?? this.link(note.path);
     const errors: string[] = [];
     if (n.ntfyServer && n.ntfyTopic) {
       try {

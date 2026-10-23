@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Meta, MediaType, NewEpisodes, Release, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
+import type { Meta, MediaType, NewEpisodes, Release, RemoteView, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
 import { addonUrls } from './addon.js';
 import type { Profiles } from './profiles.js';
+import { type Tunnel, findCloudflared } from './tunnel.js';
 import { type Auth, clientIp, describeDevice, isFromInternet, isHttps, validPassword } from './auth.js';
 import { checkCode, newSecret, otpauthUrl } from './totp.js';
 import * as catalog from './catalog.js';
@@ -32,6 +33,7 @@ interface Deps {
   follows: FollowService;
   notifier: Notifier;
   profiles: Profiles;
+  tunnel: Tunnel;
 }
 
 /** Routes that answer before sign-in. Setup routes also check that setup is actually open. */
@@ -60,7 +62,7 @@ function aired(released?: string): boolean {
 }
 
 export function registerApi(router: Router, deps: Deps): void {
-  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, profiles } = deps;
+  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, profiles, tunnel } = deps;
 
   const withOwnership = (meta: Meta): Meta => {
     if (meta.type === 'series') {
@@ -342,6 +344,36 @@ export function registerApi(router: Router, deps: Deps): void {
   router.get('/api/meta/:type/:id', async (ctx) => {
     const meta = await catalog.meta(asType(ctx.params.type), asImdb(ctx.params.id));
     ctx.json(200, { ...withOwnership(meta), follow: follows.find(meta.type, meta.id) ?? null, inList: profiles.watchlist(ctx).has(meta.type, meta.id) });
+  });
+
+  // --- Sharing over the internet (Cloudflare's tunnel) ------------------------------------
+  const remoteView = (): RemoteView => ({
+    ...tunnel.status,
+    hostname: tunnel.status.hostname ?? (settings.value.remote.hostname || undefined),
+    available: Boolean(findCloudflared()),
+    hasToken: Boolean(settings.value.remote.token),
+    loginOff: options.auth === 'none',
+    passwordSet: Boolean(settings.value.passwordHash)
+  });
+  router.get('/api/remote', (ctx) => ctx.json(200, remoteView()));
+  router.post('/api/remote', async (ctx) => {
+    const body = await ctx.body();
+    const mode = body.mode === 'quick' || body.mode === 'token' ? body.mode : 'off';
+    if (mode === 'off') {
+      tunnel.stop();
+      settings.setRemote({ mode: 'off' });
+      return ctx.json(200, remoteView());
+    }
+    // Anyone with the link reaches the sign-in page, so there has to be one, with a password behind it.
+    if (options.auth === 'none') throw new HttpError(400, 'Sign-in is turned off on this install (HAUL_AUTH=none), so Haul won’t share itself over the internet.');
+    if (!settings.value.passwordHash) throw new HttpError(400, 'Set a password first (Settings → Sign-in and security): anyone with the link sees the sign-in page.');
+    const token = typeof body.token === 'string' && body.token.trim() ? body.token.trim() : undefined;
+    if (token && !/^[A-Za-z0-9+/=_-]{40,}$/.test(token)) throw new HttpError(400, 'That doesn’t look like a tunnel token. In Cloudflare, copy the long string after --token.');
+    const hostname = typeof body.hostname === 'string' ? body.hostname.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase() : undefined;
+    if (mode === 'token' && !token && !settings.value.remote.token) throw new HttpError(400, 'Paste the tunnel token from Cloudflare.');
+    settings.setRemote({ mode, token, hostname });
+    tunnel.start(mode, { token: mode === 'token' ? settings.value.remote.token : undefined, hostname: settings.value.remote.hostname || undefined });
+    ctx.json(200, remoteView());
   });
 
   // --- Profiles ---------------------------------------------------------------------

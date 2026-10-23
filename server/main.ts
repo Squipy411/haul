@@ -14,6 +14,7 @@ import { SearchService } from './search.js';
 import { SettingsService } from './settings.js';
 import { Torbox, TorboxError } from './torbox.js';
 import { Profiles } from './profiles.js';
+import { Tunnel } from './tunnel.js';
 import * as catalog from './catalog.js';
 import { FollowService } from './follows.js';
 import { Notifier } from './notify.js';
@@ -76,7 +77,12 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   router.get('/health', (ctx) => ctx.json(200, { status: 'ok', version: VERSION }));
   registerAddon(router, { settings, library });
   const profiles = new Profiles(options.dataDir);
-  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier, profiles });
+  let listeningPort = options.port;
+  // When a quick link comes up (its address changes each time), your phone hears the new one.
+  const tunnel = new Tunnel(() => listeningPort, (url) => {
+    if (notifier.configured) void notifier.send({ title: 'Haul’s link from anywhere', message: url, url, priority: 3, tags: ['globe_with_meridians'] });
+  });
+  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier, profiles, tunnel });
   const media = new MediaTools();
   const transcodes = registerPlay(router, { library, catalog, search, torbox, media, progress: (ctx) => profiles.progress(ctx), apiKey: () => settings.value.torboxApiKey });
 
@@ -116,7 +122,10 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
           if (!SAFE_METHODS.has(req.method || 'GET') && req.headers['x-haul-request'] !== '1') {
             return ctx.json(403, { error: 'Missing request header.' });
           }
-          if (!OPEN_ROUTES.has(url.pathname) && !auth.isAuthenticated(ctx)) {
+          // A playing stream's own addresses work without the cookie, so an Apple TV (AirPlay) can fetch
+          // them: each carries a random 96-bit session id, made only for a signed-in player, kept 12 hours.
+          const playerStream = req.method === 'GET' && /^\/api\/play\/(torbox|local)\/[\w-]{16}\//.test(url.pathname);
+          if (!OPEN_ROUTES.has(url.pathname) && !playerStream && !auth.isAuthenticated(ctx)) {
             return ctx.json(401, { error: 'Sign in to Haul first.' });
           }
         }
@@ -140,6 +149,10 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   });
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : options.port;
+  listeningPort = port;
+  // Sharing that was on stays on across restarts (sign-in permitting).
+  const remote = settings.value.remote;
+  if (remote.mode !== 'off' && options.auth !== 'none' && settings.value.passwordHash) tunnel.start(remote.mode, { token: remote.token || undefined, hostname: remote.hostname || undefined });
   library.start();
   jobs.start();
   updates.start();
@@ -160,6 +173,7 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       return auth.mint('d');
     },
     close: async () => {
+      tunnel.stop();
       updates.stop();
       follows.stop();
       jobs.stop();

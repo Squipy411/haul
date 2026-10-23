@@ -119,6 +119,8 @@ Haul remembers the audio language and subtitles you last picked, so the next epi
 
 On a phone, tap the picture to show or hide the controls, double-tap the left or right side to skip 10 seconds (keep tapping to skip further), and drag along the bar to find a spot. The lock screen, headphones and keyboard media keys can play, pause, skip and go to the next episode.
 
+**AirPlay:** in Safari on an iPhone, iPad or Mac, the AirPlay button appears in the player when there's an Apple TV or AirPlay speaker on your network, and the video moves to it (the Apple TV fetches the stream itself, so it needs to reach the same Haul address).
+
 Point at (or drag along) the progress bar and a picture of that moment shows above it, so you can find a scene without guessing. The pictures are taken from the video as you point, a few kilobytes each, and only while you're pointing.
 
 Turn on **Skip intros automatically** in the player's settings menu and openings are skipped as they start (when TorBox knows where the intro is). After three episodes in a row play on their own, Haul asks "Still watching?" before starting another. **My library → History** lists everything you've watched, newest first.
@@ -155,11 +157,19 @@ Library → **Copy URL**, then in Nuvio: Settings → Addons → install from UR
 
 ## Use Haul from anywhere
 
-Haul can have a free address like `https://haul.tail1a2b3c.ts.net` that opens on your phone anywhere, with a proper HTTPS certificate and no changes to your router. It comes from [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), which is free for personal use.
-
 **Before you start:** in Haul, open **Settings → Sign-in and security**, make sure the password is long (12+ characters), and turn on **two-step sign-in**. Then a stolen or guessed password alone isn't enough to get in.
 
-### ZimaOS
+### The easy way: Settings → Share over the internet
+
+Press **Start** next to **Quick link**. Cloudflare gives Haul a free `https://….trycloudflare.com` address that works anywhere, with a QR code to open it on your phone. No account, no router changes: Cloudflare's tunnel connects out from Haul, and visitors come back through it. The address changes each time Haul restarts; with phone notifications on, Haul sends you the new one. Cloudflare's tunnel program comes with the Docker image (on Windows: `winget install --id Cloudflare.cloudflared`, then restart Haul).
+
+**Your own domain, the same address every time:** with a free Cloudflare account and a domain on it, create a tunnel in **Zero Trust → Networks → Tunnels**, add a public hostname (e.g. `haul.yourname.com`) pointing to `localhost:60700`, and paste the tunnel token into **Your own domain** in the same Settings section.
+
+### Tailscale Funnel (a free, permanent `https://haul.<tailnet>.ts.net`)
+
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) is free for personal use and keeps the same address.
+
+#### ZimaOS
 
 1. Make a free account at [tailscale.com](https://tailscale.com), then create an auth key at [Settings → Keys](https://login.tailscale.com/admin/settings/keys).
 2. In [DNS settings](https://login.tailscale.com/admin/dns), turn on **HTTPS Certificates**.
@@ -171,18 +181,17 @@ Haul can have a free address like `https://haul.tail1a2b3c.ts.net` that opens on
 
    It starts Tailscale next to Haul and prints your address. If `docker exec haul-tailscale tailscale funnel status` says Funnel isn't enabled for your account, open the link it prints once.
 
-### Docker
+#### Docker
 
 Use [deploy/tailscale/docker-compose.yml](deploy/tailscale/docker-compose.yml) (with its `serve.json`) instead of the plain compose file: `TS_AUTHKEY=tskey-auth-… docker compose up -d`.
 
-### Windows app
+#### Windows app
 
 Install [Tailscale](https://tailscale.com/download/windows), set a password in Haul's Settings (and two-step sign-in), then in PowerShell: `tailscale funnel --bg 60700`.
 
-### Other ways
+#### Other ways
 
 - **Only your own devices:** set `"AllowFunnel"` to `false` in `serve.json` (on ZimaOS, `/DATA/AppData/haul/remote/serve.json`) and restart the container with `docker restart haul-tailscale`. The same `https://…ts.net` address then opens only on devices signed in to your Tailscale (install the Tailscale app on your phone). The most private option.
-- **Cloudflare Tunnel:** free if you have a domain on Cloudflare. To try it without one, `docker run --rm --network haul_default cloudflare/cloudflared tunnel --url http://haul:60700` prints a temporary `trycloudflare.com` address.
 - **A reverse proxy** (Caddy, Nginx Proxy Manager) with a free [DuckDNS](https://www.duckdns.org) name works too, but needs ports forwarded on your router. Only ever forward HTTPS, never Haul's port 60700 directly.
 
 Away from home, Nuvio can use the same address: open Settings → Nuvio and Stremio from your new address and copy the addon address shown there.

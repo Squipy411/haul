@@ -1,7 +1,7 @@
 {
   "name": "haul",
   "productName": "Haul",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "Haul, a TorBox player: stream films and shows from TorBox in your browser, or download whole seasons to your server, renamed for Plex, Jellyfin and Nuvio.",
   "author": "Squipy411",
   "license": "MIT",

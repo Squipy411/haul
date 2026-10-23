@@ -1,4 +1,4 @@
-import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
+import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, RemoteView, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -85,6 +85,8 @@ export const api = {
   twoFactorOff: (password: string, code: string) => request<{ ok: true }>('POST', '/api/two-factor/off', { password, code }),
   endOtherSessions: () => request<{ ok: true }>('POST', '/api/sessions/end-others'),
   watchlist: () => request<{ items: WatchlistItem[] }>('GET', '/api/watchlist'),
+  remote: () => request<RemoteView>('GET', '/api/remote'),
+  setRemote: (body: { mode: 'off' | 'quick' | 'token'; token?: string; hostname?: string }) => request<RemoteView>('POST', '/api/remote', body),
   addProfile: (name: string, color?: string) => request<Profile>('POST', '/api/profiles', { name, color }),
   updateProfile: (id: string, change: { name?: string; color?: string }) => request<Profile>('PUT', `/api/profiles/${id}`, change),
   removeProfile: (id: string) => request<{ ok: true }>('DELETE', `/api/profiles/${id}`),

@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { encode } from 'uqr';
-import type { AddonInfo, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
+import type { AddonInfo, RemoteView, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, Picker, Sheet, Toggle } from '../components/ui';
 import { hoverPreviews } from '../components/HoverPreview';
@@ -129,6 +129,84 @@ function TwoFactorSheet({ onClose, onDone }: { onClose: () => void; onDone: () =
       )}
       {error && <div className="notice negative" role="alert" style={{ marginTop: 12 }}>{error}</div>}
     </Sheet>
+  );
+}
+
+/** Settings → Share over the internet: a free public HTTPS address through Cloudflare's tunnel. */
+function RemoteSection() {
+  const toast = useToast();
+  const [view, setView] = useState<RemoteView | null>(null);
+  const [token, setToken] = useState('');
+  const [hostname, setHostname] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [ownDomain, setOwnDomain] = useState(false);
+  const load = () => api.remote().then(setView, () => undefined);
+  useEffect(() => { void load(); }, []);
+  useEffect(() => { if (view?.hostname) setHostname((value) => value || view.hostname!); }, [view?.hostname]);
+  // While it starts (or retries), look again every couple of seconds.
+  useEffect(() => {
+    if (view?.state !== 'starting' && view?.state !== 'error') return;
+    const timer = window.setInterval(() => { void load(); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [view?.state]);
+  const change = async (body: { mode: 'off' | 'quick' | 'token'; token?: string; hostname?: string }) => {
+    setBusy(true);
+    try { setView(await api.setRemote(body)); setToken(''); } catch (failure) { toast((failure as Error).message, 'error'); } finally { setBusy(false); }
+  };
+  if (!view) return <Loading />;
+  const blocked = view.loginOff ? 'Sign-in is turned off on this install (HAUL_AUTH=none), so Haul won’t share itself.' : !view.passwordSet ? 'Set a password first, below in Sign-in and security: anyone with the link sees the sign-in page.' : null;
+  return (
+    <div className="stack" style={{ gap: 14 }}>
+      {!view.available && (
+        <div className="notice warning">Cloudflare’s tunnel program isn’t installed here. It comes with the Docker image. On Windows, run <code>winget install --id Cloudflare.cloudflared</code>, then restart Haul.</div>
+      )}
+      {blocked && <div className="notice">{blocked}</div>}
+      {view.mode !== 'off' ? (
+        <div className="remote-live">
+          <div className="stack" style={{ gap: 6, minWidth: 0 }}>
+            <span className={`pill ${view.state === 'online' ? 'positive' : view.state === 'error' ? 'warning' : ''}`} style={{ justifySelf: 'start' }}>
+              {view.state === 'online' ? 'Online' : view.state === 'starting' ? 'Starting…' : 'Reconnecting'}
+            </span>
+            {view.url ? <a className="remote-url" href={view.url} target="_blank" rel="noreferrer">{view.url}</a> : <span className="muted">{view.mode === 'quick' ? 'Asking Cloudflare for a link…' : 'Connecting to your tunnel…'}</span>}
+            {view.error && view.state !== 'online' && <span className="faint" style={{ fontSize: 13 }}>{view.error}</span>}
+            <span className="hint">{view.mode === 'quick' ? 'Open it on your phone, anywhere. The link changes whenever Haul restarts; with notifications on, your phone gets the new one.' : 'Your own address, the same every time.'} Turn on two-step sign-in so a password alone can’t get in.</span>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {view.url && <button className="btn sm" onClick={async () => { if (await copyText(view.url!)) toast('Link copied'); }}>Copy link</button>}
+              <button className="btn sm danger" disabled={busy} onClick={() => void change({ mode: 'off' })}>Stop sharing</button>
+            </div>
+          </div>
+          {view.url && <QrCode text={view.url} size={120} label="QR code for Haul's link" />}
+        </div>
+      ) : (
+        <>
+          <div className="switch-row">
+            <b>Quick link</b>
+            <button className="btn sm primary" disabled={busy || !view.available || Boolean(blocked)} onClick={() => void change({ mode: 'quick' })}>{busy ? <span className="spinner" /> : null}Start</button>
+            <small>Free, no account. Cloudflare gives Haul a random https://….trycloudflare.com address that works anywhere, with no router changes. It changes each time Haul restarts.</small>
+          </div>
+          <div className="switch-row">
+            <b>Your own domain</b>
+            <button className="btn sm" onClick={() => setOwnDomain((value) => !value)} aria-expanded={ownDomain}>{ownDomain ? 'Hide' : 'Set up'}</button>
+            <small>The same address every time, like haul.yourname.com. Free with a Cloudflare account and a domain on it.</small>
+          </div>
+          {ownDomain && (
+            <div className="stack" style={{ gap: 12 }}>
+              <ol className="steps-list">
+                <li>In Cloudflare, open <b>Zero Trust → Networks → Tunnels</b> and create a tunnel (type <b>Cloudflared</b>).</li>
+                <li>Copy the token (the long text after <code>--token</code> in the install command).</li>
+                <li>Under <b>Public hostname</b>, add your address (e.g. haul.yourname.com) with service <b>HTTP</b> and URL <code>localhost:60700</code>.</li>
+              </ol>
+              <div className="two">
+                <Field id="remote-token" label="Tunnel token"><input id="remote-token" className="input code" type="password" autoComplete="off" placeholder={view.hasToken ? 'Saved. Paste a new one to replace it.' : ''} value={token} onChange={(event) => setToken(event.target.value)} /></Field>
+                <Field id="remote-host" label="Your address"><input id="remote-host" className="input code" placeholder="haul.yourname.com" value={hostname} onChange={(event) => setHostname(event.target.value)} /></Field>
+              </div>
+              <div><button className="btn primary" disabled={busy || !view.available || Boolean(blocked) || (!token.trim() && !view.hasToken)} onClick={() => void change({ mode: 'token', token: token.trim() || undefined, hostname: hostname.trim() || undefined })}>Connect</button></div>
+            </div>
+          )}
+          <span className="hint">Prefer Tailscale? A free https://….ts.net address works too: <a href={REMOTE_GUIDE} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>how to</a>.</span>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -455,6 +533,10 @@ export function SettingsPage() {
               : 'Install ffmpeg on this machine to play MKV, x265 and Dolby/DTS audio in the browser. The Docker image includes it.'}</small>
           </div>
           <SwitchRow title="Play trailers when pointing at a poster" description="With a mouse, resting on a poster opens a card with its trailer playing, muted. Saved in this browser." checked={hoverTrailers} onChange={(value) => { hoverPreviews.setEnabled(value); setHoverTrailers(value); }} />
+        </Section>
+
+        <Section id="share" title="Share over the internet" description="Open Haul from your phone anywhere, or from a friend’s house, at a free HTTPS address. Cloudflare connects to Haul from the inside, so nothing on your router changes. Everyone still has to sign in.">
+          <RemoteSection />
         </Section>
 
         <Section id="profiles" title="Profiles" description="Everyone in the house can have their own Continue watching, My list and watched episodes. The library, downloads and settings are shared. With two or more, Haul asks who's watching on each browser.">

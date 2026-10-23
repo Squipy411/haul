@@ -462,6 +462,26 @@ export interface PlaySession {
   stream?: string;
 }
 
+/** Settings → Share over the internet: Cloudflare's tunnel, and where it's got to. */
+export interface RemoteStatus {
+  /** quick: a free trycloudflare.com link, no account. token: a tunnel on your own domain. */
+  mode: 'off' | 'quick' | 'token';
+  state: 'off' | 'starting' | 'online' | 'error';
+  url?: string;
+  hostname?: string;
+  error?: string;
+}
+
+/** What Settings shows about sharing: the tunnel, whether it can run here, and what's saved. */
+export interface RemoteView extends RemoteStatus {
+  /** cloudflared is installed (it comes with the Docker image). */
+  available: boolean;
+  hasToken: boolean;
+  /** HAUL_AUTH=none: sign-in is off, so sharing is refused. */
+  loginOff: boolean;
+  passwordSet: boolean;
+}
+
 /** Someone in the house, with their own Continue watching, My list and progress. */
 export interface Profile {
   id: string;

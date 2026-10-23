@@ -730,3 +730,18 @@ a.episode-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .hover-body p { margin: 0 0 4px; font-size: 13px; line-height: 18px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .trailer-failed { display: grid; place-content: center; justify-items: center; gap: 14px; height: 100%; padding: 24px; text-align: center; color: rgba(255, 255, 255, 0.8); }
 .trailer-failed p { margin: 0; }
+
+/* ---------- player: AirPlay ---------- */
+.player-airplay { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 10px; background: #000; color: rgba(255, 255, 255, 0.85); pointer-events: none; }
+.player-airplay b { font-size: 20px; color: #fff; }
+.player-airplay span { font-size: 14px; }
+.player-icon.on { color: var(--accent); }
+
+/* ---------- share over the internet ---------- */
+.remote-live { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; padding: 14px; border-radius: var(--radius-nested); background: var(--raised); }
+.remote-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: #fff; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; } /* taste-skill-ignore: a literal address to copy */
+.remote-live .qr { border-radius: 10px; }
+.steps-list { display: grid; gap: 8px; margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.5; color: var(--muted); }
+.steps-list b { color: var(--text); font-weight: 500; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; color: var(--text); }
+@media (max-width: 600px) { .remote-live { grid-template-columns: 1fr; } }

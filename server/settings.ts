@@ -12,6 +12,8 @@ interface StoredSettings extends Omit<Settings, 'passwordSet' | 'twoFactor'> {
   calendarToken: string;
   /** Moves on with "Sign out everywhere", which ends every password session. */
   sessionGeneration: number;
+  /** Sharing over the internet with Cloudflare's tunnel; the token is never shown again. */
+  remote: { mode: 'off' | 'quick' | 'token'; token: string; hostname: string };
   /** Two-step sign-in: the authenticator secret ('' when off), one being set up, and the last code step used. */
   totpSecret: string;
   totpPending: string;
@@ -78,6 +80,7 @@ function defaults(options: ServerOptions): StoredSettings {
     streamSecret: randomToken(32),
     calendarToken: randomToken(18),
     sessionGeneration: 0,
+    remote: { mode: 'off', token: '', hostname: '' },
     totpSecret: '',
     totpPending: '',
     totpUsedStep: -1
@@ -128,6 +131,7 @@ export class SettingsService {
     if (!data.torboxApiKey && options.defaults.torboxApiKey) data.torboxApiKey = options.defaults.torboxApiKey;
     data.calendarToken ||= randomToken(18);
     data.sessionGeneration ??= 0;
+    data.remote = { ...base.remote, ...data.remote };
     data.totpSecret ??= '';
     data.totpPending ??= '';
     data.totpUsedStep ??= -1;
@@ -143,7 +147,7 @@ export class SettingsService {
   }
 
   publicView(): Settings {
-    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, sessionGeneration: _generation, totpSecret, totpPending: _pending, totpUsedStep: _used, ...rest } = this.file.data;
+    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, sessionGeneration: _generation, remote: _remote, totpSecret, totpPending: _pending, totpUsedStep: _used, ...rest } = this.file.data;
     const key = rest.torboxApiKey;
     return {
       ...rest,
@@ -226,6 +230,11 @@ export class SettingsService {
 
   regenerateCalendarToken(): void {
     this.file.data.calendarToken = randomToken(18);
+    this.file.flush();
+  }
+
+  setRemote(remote: { mode: 'off' | 'quick' | 'token'; token?: string; hostname?: string }): void {
+    this.file.data.remote = { mode: remote.mode, token: remote.token ?? this.file.data.remote.token, hostname: remote.hostname ?? this.file.data.remote.hostname };
     this.file.flush();
   }
 

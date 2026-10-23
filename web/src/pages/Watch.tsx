@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ListVideo, X, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings2, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import { Airplay, Check, ChevronLeft, ListVideo, X, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, Settings2, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaType, PlayCaps, PlaySession, Release, WatchProgress } from '../../../shared/types';
@@ -318,6 +318,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [rate, setRate] = useState(1);
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
+  /** AirPlay: Safari has found a receiver; and whether the video is playing on one now. */
+  const [airplay, setAirplay] = useState<{ available: boolean; active: boolean }>({ available: false, active: false });
   const [failure, setFailure] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; time: number; width: number } | null>(null);
   const [upNextDismissed, setUpNextDismissed] = useState(false);
@@ -399,7 +401,9 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           }
         };
         // startFragPrefetch fetches the first piece while the player is still being set up.
-        const hls = new Hls({ startPosition: seekTo, startFragPrefetch: true, testBandwidth: false, maxBufferLength: 60, backBufferLength: 90, enableWorker: true, fragLoadPolicy: patient, playlistLoadPolicy: patient, manifestLoadPolicy: patient } as any) as unknown as HlsInstance;
+        // In Safari, Apple's ManagedMediaSource: the kind that can hand the video to AirPlay.
+        const safari = 'WebKitPlaybackTargetAvailabilityEvent' in window;
+        const hls = new Hls({ startPosition: seekTo, startFragPrefetch: true, testBandwidth: false, maxBufferLength: 60, backBufferLength: 90, enableWorker: true, preferManagedMediaSource: safari, fragLoadPolicy: patient, playlistLoadPolicy: patient, manifestLoadPolicy: patient } as any) as unknown as HlsInstance;
         hlsRef.current = hls;
         let recovered = 0;
         hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -407,6 +411,17 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR && recovered < 3) { recovered += 1; hls.startLoad(); return; }
           if (data.type === Hls.ErrorTypes.MEDIA_ERROR && recovered < 3) { recovered += 1; hls.recoverMediaError(); return; }
           fail.current(data.response?.code === 500 || data.response?.code === 502 ? 'The stream stopped. Try again, or pick another version.' : 'The stream stopped loading.');
+        });
+        // AirPlay (Safari): an Apple TV can't use what hls.js feeds the page, so it's also given the stream's
+        // own address as a second source. hls.js turns AirPlay off and clears sources as it attaches, so this
+        // comes after, the way Apple describes for its ManagedMediaSource.
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          if (!('WebKitPlaybackTargetAvailabilityEvent' in window)) return;
+          const alternative = document.createElement('source');
+          alternative.type = 'application/x-mpegurl';
+          alternative.src = new URL(resolved, window.location.href).href;
+          element.appendChild(alternative);
+          element.disableRemotePlayback = false;
         });
         hls.loadSource(resolved);
         hls.attachMedia(element);
@@ -418,6 +433,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       hlsRef.current?.destroy();
       hlsRef.current = null;
       element.removeAttribute('src');
+      for (const source of element.querySelectorAll('source')) source.remove();
       element.load();
     };
   }, [url, offset, audio, mode, reload]);
@@ -639,6 +655,20 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     else if (media?.webkitEnterFullscreen) media.webkitEnterFullscreen();
   }, []);
 
+  // Safari reports AirPlay receivers on the network, and when the video moves to one.
+  useEffect(() => {
+    const element = video.current as (HTMLVideoElement & { webkitCurrentPlaybackTargetIsWireless?: boolean }) | null;
+    if (!element || !('WebKitPlaybackTargetAvailabilityEvent' in window)) return;
+    const onAvailability = (event: Event) => setAirplay((value) => ({ ...value, available: (event as Event & { availability?: string }).availability === 'available' }));
+    const onWireless = () => setAirplay((value) => ({ ...value, active: Boolean(element.webkitCurrentPlaybackTargetIsWireless) }));
+    element.addEventListener('webkitplaybacktargetavailabilitychanged', onAvailability);
+    element.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', onWireless);
+    return () => {
+      element.removeEventListener('webkitplaybacktargetavailabilitychanged', onAvailability);
+      element.removeEventListener('webkitcurrentplaybacktargetiswirelesschanged', onWireless);
+    };
+  }, []);
+
   useEffect(() => {
     const onChange = () => setFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onChange);
@@ -760,6 +790,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       <video
         ref={video}
         playsInline
+        x-webkit-airplay="allow"
         poster={session.background}
         onClick={onVideoClick}
         onDoubleClick={() => { if (pointerKind.current === 'mouse') toggleFullscreen(); }}
@@ -777,6 +808,9 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         }}
       />
 
+      {airplay.active && (
+        <div className="player-airplay" aria-live="polite"><Airplay size={44} /><b>Playing on AirPlay</b><span>Use these controls, or the remote.</span></div>
+      )}
       {activeCues.length > 0 && <div className="player-cues">{activeCues.map((cue) => <span key={`${cue.start}-${cue.text}`}>{cue.text}</span>)}</div>}
 
       {waiting && !failure && (
@@ -941,6 +975,9 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+          {airplay.available && (
+            <button className={`player-icon ${airplay.active ? 'on' : ''}`} onClick={() => (video.current as HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void } | null)?.webkitShowPlaybackTargetPicker?.()} aria-label={airplay.active ? 'Playing on AirPlay. Choose another screen' : 'AirPlay'} title="AirPlay"><Airplay size={20} /></button>
+          )}
           {'pictureInPictureEnabled' in document && (document as any).pictureInPictureEnabled && (
             <button className="player-icon hide-xs" onClick={() => { const element = video.current as any; if (document.pictureInPictureElement) void document.exitPictureInPicture(); else void element?.requestPictureInPicture?.(); }} aria-label="Picture in picture"><PictureInPicture2 size={20} /></button>
           )}
