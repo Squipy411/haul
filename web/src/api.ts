@@ -78,6 +78,7 @@ export const api = {
   play: (body: { type: MediaType; imdbId: string; season?: number; episode?: number; source?: 'local' | 'torbox'; hash?: string; caps: PlayCaps }) => request<PlaySession>('POST', '/api/play', body),
   playTracks: (stream: string, choice: { audio?: number; subtitle?: number | null }) => request<{ url: string; audio: number; subtitle: number | null }>('POST', `/api/play/torbox/${stream}/tracks`, choice),
   playInfo: () => request<{ ffmpeg: boolean; torbox: boolean }>('GET', '/api/play/info'),
+  progressFor: (type: MediaType, imdbId: string) => request<{ items: WatchProgress[] }>('GET', `/api/progress/title/${type}/${imdbId}`),
   continueWatching: () => request<{ items: WatchProgress[] }>('GET', '/api/continue'),
   forgetProgress: (key: string) => request<{ ok: true }>('DELETE', `/api/progress/${encodeURIComponent(key)}`),
   /** keepalive lets the last position save as the page closes. */

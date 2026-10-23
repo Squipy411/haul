@@ -45,6 +45,11 @@ export class ProgressStore {
     return saved;
   }
 
+  /** Every entry for one film or show, for progress bars and Watched marks. */
+  forTitle(type: MediaType, imdbId: string): WatchProgress[] {
+    return Object.values(this.file.data.items).filter((entry) => entry.type === type && entry.imdbId === imdbId);
+  }
+
   remove(key: string): void {
     delete this.file.data.items[key];
     this.file.save();

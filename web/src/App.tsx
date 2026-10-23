@@ -1,6 +1,6 @@
 import { Command } from 'cmdk';
-import { CalendarDays, ChevronLeft, Download, House, Library as LibraryIcon, Search, Settings as SettingsIcon } from 'lucide-react';
-import { Tooltip } from 'radix-ui';
+import { CalendarDays, ChevronLeft, Download, Ellipsis, Film, House, Library as LibraryIcon, Search, Settings as SettingsIcon, Tv } from 'lucide-react';
+import { DropdownMenu, Tooltip } from 'radix-ui';
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
@@ -37,13 +37,16 @@ function prefetchPages(): void {
   else setTimeout(load, 1500);
 }
 
+/** Watching comes first; the second group manages downloads and the app. On a phone the second group sits behind More. */
 const NAV = [
-  { to: '/', label: 'Home', icon: House, match: (path: string) => path === '/' || path.startsWith('/title') || path.startsWith('/browse') || path.startsWith('/search') },
-  { to: '/upcoming', label: 'Upcoming', icon: CalendarDays, match: (path: string) => path.startsWith('/upcoming') },
-  { to: '/downloads', label: 'Downloads', icon: Download, match: (path: string) => path.startsWith('/downloads') },
-  { to: '/library', label: 'Library', icon: LibraryIcon, match: (path: string) => path.startsWith('/library') },
-  { to: '/settings', label: 'Settings', icon: SettingsIcon, match: (path: string) => path.startsWith('/settings') }
-];
+  { to: '/', label: 'Home', short: 'Home', icon: House, group: 'watch', match: (path: string) => path === '/' || path.startsWith('/title') || path.startsWith('/search') },
+  { to: '/browse/series/top', label: 'Shows', short: 'Shows', icon: Tv, group: 'watch', match: (path: string) => path.startsWith('/browse/series') },
+  { to: '/browse/movie/top', label: 'Movies', short: 'Movies', icon: Film, group: 'watch', match: (path: string) => path.startsWith('/browse/movie') },
+  { to: '/library', label: 'My library', short: 'Library', icon: LibraryIcon, group: 'watch', match: (path: string) => path.startsWith('/library') },
+  { to: '/upcoming', label: 'Upcoming', short: 'Upcoming', icon: CalendarDays, group: 'manage', match: (path: string) => path.startsWith('/upcoming') },
+  { to: '/downloads', label: 'Downloads', short: 'Downloads', icon: Download, group: 'manage', match: (path: string) => path.startsWith('/downloads') },
+  { to: '/settings', label: 'Settings', short: 'Settings', icon: SettingsIcon, group: 'manage', match: (path: string) => path.startsWith('/settings') }
+] as const;
 
 function Page({ path }: { path: string }) {
   const title = /^\/title\/(movie|series)\/(tt\d+)$/.exec(path);
@@ -123,7 +126,7 @@ function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: b
 }
 
 function Shell({ status, children }: { status: Status; children: ReactNode }) {
-  const { path, back } = useRouter();
+  const { path, back, navigate } = useRouter();
   const [crumb, setCrumb] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const openSearch = useCallback(() => setSearchOpen(true), []);
@@ -149,12 +152,15 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
           <aside className="sidebar">
             <Link to="/" className="wordmark"><Mark />Haul</Link>
             <nav className="nav" aria-label="Main">
-              {NAV.map(({ to, label, icon: Icon, match }) => (
-                <Link key={to} to={to} className={`nav-item ${match(path) ? 'active' : ''}`} aria-current={match(path) ? 'page' : undefined}>
-                  <Icon size={16} strokeWidth={1.6} />
-                  {label}
-                  {to === '/downloads' && active > 0 && <span className="count">{active}</span>}
-                </Link>
+              {NAV.map(({ to, label, icon: Icon, match, group }, index) => (
+                <div key={to} style={{ display: 'contents' }}>
+                  {group === 'manage' && NAV[index - 1]?.group === 'watch' && <div className="nav-divider" role="separator" />}
+                  <Link to={to} className={`nav-item ${match(path) ? 'active' : ''}`} aria-current={match(path) ? 'page' : undefined}>
+                    <Icon size={16} strokeWidth={1.6} />
+                    {label}
+                    {to === '/downloads' && active > 0 && <span className="count">{active}</span>}
+                  </Link>
+                </div>
               ))}
             </nav>
             <div className="side-foot">
@@ -193,13 +199,31 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
             {children}
           </div>
           <nav className="bottombar" aria-label="Main">
-            {NAV.map(({ to, label, icon: Icon, match }) => (
+            {NAV.filter((item) => item.group === 'watch').map(({ to, short, icon: Icon, match }) => (
               <Link key={to} to={to} className={match(path) ? 'active' : ''}>
                 <Icon size={20} strokeWidth={1.6} />
-                {label}
-                {to === '/downloads' && active > 0 && <span className="count">{active}</span>}
+                {short}
               </Link>
             ))}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button className={NAV.some((item) => item.group === 'manage' && item.match(path)) ? 'active' : ''} aria-label="More">
+                  <Ellipsis size={20} strokeWidth={1.6} />
+                  More
+                  {active > 0 && <span className="count">{active}</span>}
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="popover" side="top" align="end" sideOffset={8}>
+                  {NAV.filter((item) => item.group === 'manage').map(({ to, label, icon: Icon }) => (
+                    <DropdownMenu.Item key={to} className="popover-item" onSelect={() => navigate(to)}>
+                      <span className="row" style={{ gap: 10 }}><Icon size={16} strokeWidth={1.6} />{label}</span>
+                      {to === '/downloads' && active > 0 && <span className="num faint">{active}</span>}
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </nav>
           <Palette open={searchOpen} onOpenChange={setSearchOpen} />
         </Tooltip.Provider>

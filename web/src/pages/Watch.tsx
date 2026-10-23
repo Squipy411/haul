@@ -1,9 +1,9 @@
-import { Check, ChevronLeft, Languages, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import { Check, ChevronLeft, Languages, ListVideo, X, Maximize, Minimize, Pause, PictureInPicture2, Play, RotateCcw, RotateCw, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MediaType, PlayCaps, PlaySession } from '../../../shared/types';
+import type { MediaType, PlayCaps, PlaySession, WatchProgress } from '../../../shared/types';
 import { api } from '../api';
-import { useRouter, useToast } from '../lib';
+import { useAsync, useRouter, useToast } from '../lib';
 
 type HlsInstance = { destroy: () => void; loadSource: (url: string) => void; attachMedia: (media: HTMLMediaElement) => void; on: (event: string, handler: (event: string, data: any) => void) => void; startLoad: (at?: number) => void; recoverMediaError: () => void };
 
@@ -46,6 +46,49 @@ export function parseVtt(text: string): Cue[] {
     if (body) cues.push({ start: time(from!), end: time(to!.trim().split(/\s+/)[0]!), text: body });
   }
   return cues;
+}
+
+/** The show's episodes, in a drawer over the picture: pick one to play it. */
+function EpisodesPanel({ session, onPick, onClose }: { session: PlaySession; onPick: (season: number, episode: number) => void; onClose: () => void }) {
+  const meta = useAsync(() => api.meta('series', session.imdbId), [session.imdbId]);
+  const seen = useAsync(() => api.progressFor('series', session.imdbId).catch(() => ({ items: [] as WatchProgress[] })), [session.imdbId]);
+  const [season, setSeason] = useState(session.season ?? 1);
+  const seasons = (meta.data?.seasons ?? []).filter((value) => value > 0);
+  const episodes = (meta.data?.episodes ?? []).filter((episode) => episode.season === season);
+  const progressOf = (episode: number) => seen.data?.items.find((entry) => entry.season === season && entry.episode === episode);
+  const current = useRef<HTMLButtonElement>(null);
+  useEffect(() => { current.current?.scrollIntoView({ block: 'center' }); }, [meta.data, season]);
+  return (
+    <aside className="player-panel" aria-label="Episodes" onPointerMove={(event) => event.stopPropagation()}>
+      <div className="player-panel-head">
+        <b>{session.title}</b>
+        <button className="player-icon" onClick={onClose} aria-label="Close episodes"><X size={18} /></button>
+      </div>
+      {seasons.length > 1 && (
+        <div className="chips player-seasons">
+          {seasons.map((value) => <button key={value} type="button" className="chip" aria-pressed={value === season} onClick={() => setSeason(value)}>Season {value}</button>)}
+        </div>
+      )}
+      <div className="player-episodes">
+        {!meta.data && <div className="player-center"><span className="spinner" /></div>}
+        {episodes.map((episode) => {
+          const isCurrent = episode.season === session.season && episode.episode === session.episode;
+          const out = !episode.released || Date.parse(episode.released) <= Date.now() + 12 * 3600_000;
+          const entry = progressOf(episode.episode);
+          const pct = entry && entry.duration ? Math.min(100, (entry.position / entry.duration) * 100) : 0;
+          return (
+            <button key={episode.id} ref={isCurrent ? current : undefined} className={`player-episode ${isCurrent ? 'current' : ''}`} disabled={!out} onClick={() => onPick(episode.season, episode.episode)}>
+              <span className="still">{episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />}{pct > 2 && <i className="watched"><b style={{ width: `${pct}%` }} /></i>}</span>
+              <span className="text">
+                <b className="truncate">{episode.episode}. {episode.title}</b>
+                <span className="truncate">{isCurrent ? 'Playing now' : out ? (pct >= 92 ? 'Watched' : pct > 2 ? 'Started' : '') : `Out ${new Date(episode.released!).toLocaleDateString()}`}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
 }
 
 export function Watch({ type, id }: { type: MediaType; id: string }) {
@@ -125,6 +168,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [hover, setHover] = useState<{ x: number; time: number } | null>(null);
   const [upNextDismissed, setUpNextDismissed] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [panel, setPanel] = useState(false);
+  const [slow, setSlow] = useState(false);
   const startAt = useRef(session.resume ?? 0);
   const hideTimer = useRef<number>(0);
   const lastSaved = useRef(0);
@@ -156,7 +201,17 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           else setFailure("This browser can't play streams. Try Chrome, Edge, Firefox or Safari.");
           return;
         }
-        const hls = new Hls({ startPosition: seekTo, maxBufferLength: 60, backBufferLength: 90, enableWorker: true }) as unknown as HlsInstance;
+        // TorBox converts on demand, so the first piece of a fresh stream (or one far into it) can take a
+        // while; ffmpeg on a home server too. Give them time rather than failing at hls.js's 10 seconds.
+        const patient = {
+          default: {
+            maxTimeToFirstByteMs: 30_000,
+            maxLoadTimeMs: 120_000,
+            timeoutRetry: { maxNumRetry: 4, retryDelayMs: 0, maxRetryDelayMs: 0 },
+            errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+          }
+        };
+        const hls = new Hls({ startPosition: seekTo, maxBufferLength: 60, backBufferLength: 90, enableWorker: true, fragLoadPolicy: patient, playlistLoadPolicy: patient, manifestLoadPolicy: patient } as any) as unknown as HlsInstance;
         hlsRef.current = hls;
         let recovered = 0;
         hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -178,6 +233,13 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       element.load();
     };
   }, [url, offset, audio, mode, reload]);
+
+  // After a few seconds of waiting, say why.
+  useEffect(() => {
+    if (!waiting) { setSlow(false); return; }
+    const timer = window.setTimeout(() => setSlow(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, [waiting]);
 
   useEffect(() => {
     const element = video.current;
@@ -216,8 +278,17 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const reveal = useCallback(() => {
     setVisible(true);
     window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => { if (!video.current?.paused) setVisible(false); }, 3000);
+    hideTimer.current = window.setTimeout(() => { if (!video.current?.paused && !panelOpen.current) setVisible(false); }, 3000);
   }, []);
+  const panelOpen = useRef(false);
+  useEffect(() => { panelOpen.current = panel; if (panel) setVisible(true); }, [panel]);
+
+  const playEpisode = useCallback((season: number, episode: number) => {
+    save();
+    setPanel(false);
+    if (season === session.season && episode === session.episode) return;
+    navigate(`/watch/series/${session.imdbId}?s=${season}&e=${episode}`, { replace: true });
+  }, [navigate, save, session.episode, session.imdbId, session.season]);
 
   const togglePlay = useCallback(() => {
     const element = video.current;
@@ -381,7 +452,12 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
 
       {activeCues.length > 0 && <div className="player-cues">{activeCues.map((cue) => <span key={`${cue.start}-${cue.text}`}>{cue.text}</span>)}</div>}
 
-      {waiting && !failure && <div className="player-center"><span className="spinner large" /></div>}
+      {waiting && !failure && (
+        <div className="player-center"><span className="spinner large" /></div>
+      )}
+      {waiting && slow && !failure && (
+        <div className="player-wait">{session.kind === 'torbox' ? 'TorBox is still preparing the video…' : session.converting ? 'Converting the video on your server…' : 'Still loading…'}</div>
+      )}
       {!playing && !waiting && !failure && countdown === null && (
         <button className="player-center player-big" onClick={togglePlay} aria-label="Play"><Play size={40} fill="currentColor" /></button>
       )}
@@ -418,6 +494,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         </div>
       )}
 
+      {panel && <EpisodesPanel session={session} onPick={playEpisode} onClose={() => setPanel(false)} />}
+
       <div className="player-bottom">
         <div
           className="player-bar"
@@ -448,6 +526,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           <span className="player-time num">{clock(time)} <span className="faint">/ {duration ? clock(duration) : '–'}</span></span>
           <span className="grow" />
           {session.next && <button className="player-icon" onClick={playNext} aria-label="Next episode" title="Next episode (N)"><SkipForward size={20} /></button>}
+          {session.type === 'series' && <button className="player-icon" onClick={() => setPanel((value) => !value)} aria-label="Episodes" aria-expanded={panel} title="Episodes"><ListVideo size={20} /></button>}
           {(session.audios.length > 1 || session.subtitles.length > 0) && (
             <DropdownMenu.Root onOpenChange={(open) => { if (open) setVisible(true); }}>
               <DropdownMenu.Trigger asChild>

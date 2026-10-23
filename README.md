@@ -12,7 +12,8 @@ You need a TorBox account and either Docker or a Windows PC.
 
 ## What you can do
 
-- **Watch in your browser.** Press play on any film or episode: Haul plays your own file, or streams the best version TorBox already has without downloading it first. Resume where you stopped, Continue watching on Home, Skip intro, next episode, subtitles and audio tracks.
+- **Watch in your browser.** Press play on any film or episode: Haul plays your own file, or streams the best version TorBox already has without downloading it first. Resume where you stopped, Continue watching, Skip intro, next episode, an episodes drawer in the player, subtitles and audio tracks.
+- **Built like a streaming site.** A featured hero on Home, rows for what you're watching, new episodes of your shows and your own library, Shows and Movies to browse by genre, and title pages where episodes show what you've watched. Downloading lives one tab away.
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
 - **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
 - **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. Largest files are listed first (switch to best match or most seeders if you like). From a multi-season pack, only the season you asked for is downloaded.
@@ -27,9 +28,9 @@ You need a TorBox account and either Docker or a Windows PC.
 - **On your phone:** add Haul to your home screen, get notifications through ntfy, and subscribe your calendar to the Upcoming schedule.
 - **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too.
 
-| Season packs | Series page |
+| Downloading a season | A show |
 | --- | --- |
-| ![Season packs](docs/screenshots/packs.jpg) | ![Series](docs/screenshots/show.jpg) |
+| ![Download tab](docs/screenshots/packs.jpg) | ![Show page](docs/screenshots/show.jpg) |
 | **Library and Nuvio addon** | **Upcoming** |
 | ![Library](docs/screenshots/library.jpg) | ![Upcoming](docs/screenshots/upcoming.jpg) |
 

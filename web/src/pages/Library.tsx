@@ -1,9 +1,9 @@
-import { Copy, ExternalLink } from 'lucide-react';
+import { Copy, ExternalLink, Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { LibrarySummary, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Loading, Poster, Sheet, TabBar } from '../components/ui';
-import { ago, bytes, copyText, useAsync, usePolling, useRouter, useToast } from '../lib';
+import { Link, ago, bytes, copyText, useAsync, usePolling, useRouter, useToast } from '../lib';
 
 function AddonCard() {
   const toast = useToast();
@@ -98,14 +98,13 @@ export function LibraryPage() {
     <div className="canvas">
       <div className="title-row">
         <div>
-          <h1>Library</h1>
+          <h1>My library</h1>
           {data && <div className="sub num">{shows.length} shows · {movies.length} movies · {bytes(all.reduce((sum, item) => sum + item.size, 0))} · checked {ago(data.scannedAt)}</div>}
         </div>
         <button className="btn" disabled={data?.scanning} onClick={async () => { await api.scanLibrary(); toast('Checking your folders for new files'); setTimeout(reload, 1200); }}>
           {data?.scanning ? <><span className="spinner" />Checking</> : 'Check folders'}
         </button>
       </div>
-      <AddonCard />
       {error && <ErrorNote message={error} onRetry={reload} />}
       {!data && !error && <Loading />}
       {data && (
@@ -123,9 +122,21 @@ export function LibraryPage() {
           <div className="grid" style={{ marginTop: 16 }}>
             {items.map((item) => (
               <div key={item.id} className="poster-card" onClick={() => (item.imdbId ? navigate(`/title/${item.type}/${item.imdbId}`) : setFixing(item))}>
-                <Poster src={item.poster} title={item.title} />
+                <div className="poster-wrap">
+                  <Poster src={item.poster} title={item.title} />
+                  {item.imdbId && (
+                    <Link
+                      to={item.type === 'movie' ? `/watch/movie/${item.imdbId}` : `/title/series/${item.imdbId}`}
+                      className="poster-play"
+                      aria-label={item.type === 'movie' ? `Play ${item.title}` : `Episodes of ${item.title}`}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <span className="play-badge"><Play size={18} fill="currentColor" /></span>
+                    </Link>
+                  )}
+                </div>
                 <div className="poster-name truncate" title={item.title}>{item.title}</div>
-                <div className="poster-sub row" style={{ justifyContent: 'space-between' }}>
+                <div className="poster-sub row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '2px 6px' }}>
                   <span>{item.type === 'series' ? `${item.fileCount} episode${item.fileCount === 1 ? '' : 's'}` : item.year ?? bytes(item.size)}</span>
                   {item.matched
                     ? <button className="btn ghost sm" style={{ height: 20, padding: '0 6px', fontSize: 12 }} onClick={(event) => { event.stopPropagation(); setFixing(item); }}>Change</button>
@@ -136,6 +147,7 @@ export function LibraryPage() {
           </div>
         </>
       )}
+      {data && <div style={{ marginTop: 40 }}><AddonCard /></div>}
       {fixing && <MatchSheet item={fixing} onClose={() => setFixing(null)} onSaved={reload} />}
     </div>
   );

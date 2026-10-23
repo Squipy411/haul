@@ -1,10 +1,11 @@
-import { Play } from 'lucide-react';
+import { Check, Download, Play } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Episode, Follow, Job, MediaType, Meta, Release, SeasonPlan } from '../../../shared/types';
+import type { Episode, Job, MediaType, Meta, Release, SeasonPlan, WatchProgress } from '../../../shared/types';
 import { api } from '../api';
 import { FollowControl } from '../components/Follow';
+import { Hero } from '../components/Hero';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
-import { Empty, ErrorNote, Loading, Menu, Picker, Sheet, TabBar, Tick, Toggle, join } from '../components/ui';
+import { Empty, ErrorNote, Loading, Picker, Sheet, TabBar, Toggle, join } from '../components/ui';
 import { Link, airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
 import { diskFor, useCrumb, useStatus } from '../shell';
 
@@ -251,38 +252,52 @@ function EverythingSheet({ meta, seasons, onClose }: { meta: Meta; seasons: numb
   );
 }
 
-function EpisodeRow({ meta, episode, incoming, selected, onToggle, open, onOpen }: {
-  meta: Meta; episode: Episode; incoming?: number; selected: boolean; onToggle: () => void; open: boolean; onOpen: () => void;
+const minutesLeft = (entry: WatchProgress) => Math.max(1, Math.round((entry.duration - entry.position) / 60));
+const isWatched = (entry?: WatchProgress) => Boolean(entry && entry.duration > 0 && entry.position / entry.duration >= 0.92);
+
+/** One episode in the watch list: press the picture or the name to play it. */
+function EpisodeRow({ meta, episode, incoming, progress, open, onOpen }: {
+  meta: Meta; episode: Episode; incoming?: number; progress?: WatchProgress; open: boolean; onOpen: () => void;
 }) {
   const download = useDownloader(meta);
+  const { navigate } = useRouter();
   const isAired = aired(episode);
   const releases = useAsync(() => (open ? api.episodeReleases(meta.id, episode.season, episode.episode) : Promise.resolve(null)), [open]);
-  const { navigate } = useRouter();
   const watch = `/watch/series/${meta.id}?s=${episode.season}&e=${episode.episode}`;
-  const status = episode.owned ? <span className="pill positive">In library</span>
-    : incoming !== undefined ? <span className="pill transfer num">Downloading {Math.round(incoming * 100)}%</span>
-      : !isAired ? <span className="pill">Out {airDate(episode.released)}</span>
-        : <span className="faint">Not downloaded</span>;
+  const watched = isWatched(progress);
+  const started = progress && !watched && progress.position > 30;
+  const still = episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />;
   return (
-    <div className={`trow tall ${open ? 'open' : ''}`} id={`episode-${episode.episode}`}>
-      <Tick checked={selected} onChange={onToggle} disabled={!isAired || episode.owned} label={`Select episode ${episode.episode}`} />
-      <div className="ident">
-        {isAired
-          ? <Link to={watch} className="thumb playable" aria-label={`${episode.owned ? 'Play' : 'Stream'} episode ${episode.episode}`}>{episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />}<span className="play-badge"><Play size={16} fill="currentColor" /></span></Link>
-          : <div className="thumb">{episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />}</div>}
-        <div style={{ minWidth: 0 }}>
-          <div className="t1 truncate"><span className="faint num">{episode.episode}</span>&nbsp;&nbsp;{episode.title}</div>
-          <div className="t2">{airDate(episode.released)}</div>
-          {episode.overview && <div className="t3 clamp-2">{episode.overview}</div>}
-        </div>
-      </div>
-      <span className="status">{status}</span>
+    <div className={`episode ${open ? 'open' : ''} ${isAired ? '' : 'unaired'}`} id={`episode-${episode.episode}`}>
       {isAired ? (
-        <div className="row episode-actions">
-          <Link to={watch} className="btn sm icon" aria-label={`${episode.owned ? 'Play' : 'Stream'} episode ${episode.episode}`} title={episode.owned ? 'Play your file' : 'Stream from TorBox'}><Play size={14} fill="currentColor" /></Link>
-          <button className="btn sm" onClick={onOpen}>{open ? 'Hide' : 'Versions'}</button>
+        <Link to={watch} className="episode-still" aria-label={`${started ? 'Resume' : 'Play'} episode ${episode.episode}, ${episode.title}`}>
+          {still}
+          <span className="play-badge"><Play size={18} fill="currentColor" /></span>
+          {started && <i className="watched" aria-hidden="true"><b style={{ width: `${Math.min(100, (progress!.position / progress!.duration) * 100)}%` }} /></i>}
+          {watched && <span className="seen" title="Watched"><Check size={13} strokeWidth={3} /></span>}
+        </Link>
+      ) : <div className="episode-still">{still}</div>}
+      <div className="episode-body">
+        <div className="episode-head">
+          {isAired ? <Link to={watch} className="episode-name"><span className="faint num">{episode.episode}.</span> {episode.title}</Link> : <span className="episode-name"><span className="faint num">{episode.episode}.</span> {episode.title}</span>}
         </div>
-      ) : <span />}
+        <div className="episode-facts">
+          {join([airDate(episode.released), meta.runtime])}
+          {watched && <span className="tag">Watched</span>}
+          {started && <span className="tag">{minutesLeft(progress!)} min left</span>}
+          {episode.owned && <span className="tag positive">In your library</span>}
+          {incoming !== undefined && <span className="tag transfer num">Downloading {Math.round(incoming * 100)}%</span>}
+          {!isAired && <span className="tag">Out {airDate(episode.released)}</span>}
+        </div>
+        {episode.overview && <p className="episode-overview">{episode.overview}</p>}
+      </div>
+      {isAired && (
+        <div className="episode-actions">
+          <button className={`btn sm ${open ? '' : 'ghost'}`} onClick={onOpen} aria-expanded={open}>
+            <Download size={14} />{open ? 'Hide versions' : 'Versions'}
+          </button>
+        </div>
+      )}
       {open && (
         <div className="expand">
           {releases.loading && <Loading text={`Looking for episode ${episode.episode}…`} />}
@@ -309,7 +324,7 @@ function SeriesView({ meta }: { meta: Meta }) {
   const latestAired = [...seasons].reverse().find((season) => season > 0 && meta.episodes.some((episode) => episode.season === season && aired(episode)));
   const requested = search.has('season') ? Number(search.get('season')) : Number.NaN;
   const [season, setSeason] = useState<number>(seasons.includes(requested) ? requested : (latestAired ?? seasons[0] ?? 1));
-  const [tab, setTab] = useState<'episodes' | 'packs'>(search.get('tab') === 'packs' ? 'packs' : 'episodes');
+  const [tab, setTab] = useState<'episodes' | 'download'>(search.get('tab') === 'packs' || search.get('tab') === 'download' ? 'download' : 'episodes');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [openEpisode, setOpenEpisode] = useState<number | null>(null);
   const [plan, setPlan] = useState<{ episodes?: number[] } | null>(null);
@@ -317,14 +332,20 @@ function SeriesView({ meta }: { meta: Meta }) {
   const [packSkipOwned, setPackSkipOwned] = useState(true);
   const download = useDownloader(meta);
   const incoming = useIncoming(meta.id, season);
+  const watched = useAsync(() => api.progressFor('series', meta.id).catch(() => ({ items: [] as WatchProgress[] })), [meta.id]);
 
   const episodes = useMemo(() => meta.episodes.filter((episode) => episode.season === season), [meta, season]);
   const owned = episodes.filter((episode) => episode.owned);
   const missing = episodes.filter((episode) => !episode.owned && aired(episode) && !incoming.has(episode.episode));
-  const packs = useAsync(() => (tab === 'packs' ? api.seasonPacks(meta.id, season) : Promise.resolve(null)), [tab, season, meta.id]);
+  const progressOf = useMemo(() => {
+    const map = new Map<string, WatchProgress>();
+    for (const entry of watched.data?.items ?? []) map.set(`${entry.season}:${entry.episode}`, entry);
+    return map;
+  }, [watched.data]);
+  const packs = useAsync(() => (tab === 'download' ? api.seasonPacks(meta.id, season) : Promise.resolve(null)), [tab, season, meta.id]);
 
   useEffect(() => { setSelected(new Set()); setOpenEpisode(null); }, [season]);
-  // "Get" on Home's new-episodes list lands here and opens the plan for just those episodes.
+  // "Download" on Home's new-episodes list lands here and opens the plan for just those episodes.
   useEffect(() => {
     if (search.get('get') !== 'new') return;
     const lastOwned = Math.max(0, ...owned.map((episode) => episode.episode));
@@ -336,7 +357,7 @@ function SeriesView({ meta }: { meta: Meta }) {
 
   const chooseSeason = (value: number) => {
     setSeason(value);
-    navigate(`/title/series/${meta.id}?season=${value}`, { replace: true });
+    navigate(`/title/series/${meta.id}?season=${value}${tab === 'download' ? '&tab=download' : ''}`, { replace: true });
   };
   const toggle = (episode: number) => setSelected((current) => {
     const next = new Set(current);
@@ -344,9 +365,7 @@ function SeriesView({ meta }: { meta: Meta }) {
     return next;
   });
   const pick = (episode: Episode) => {
-    setTab('episodes');
     if (!episode.owned && aired(episode) && !incoming.has(episode.episode)) toggle(episode.episode);
-    else document.getElementById(`episode-${episode.episode}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
   const downloadPack = (release: Release) => {
     // With nothing missing, a pack download is an upgrade: take every episode.
@@ -358,59 +377,31 @@ function SeriesView({ meta }: { meta: Meta }) {
 
   // Seasons (not specials) with episodes that are out and not in the library.
   const seasonsMissing = seasons.filter((value) => value > 0 && meta.episodes.some((episode) => episode.season === value && !episode.owned && aired(episode)));
-
-  const summary = !missing.length && owned.length
-    ? `You have every episode that's out`
-    : join([`${episodes.length} episodes`, owned.length ? `${owned.length} in your library` : '', incoming.size ? `${incoming.size} on the way` : '', missing.length ? `${missing.length} to get` : '']);
+  const seenCount = episodes.filter((episode) => isWatched(progressOf.get(`${episode.season}:${episode.episode}`))).length;
+  const summary = join([`${episodes.length} episodes`, seenCount ? `${seenCount} watched` : '', owned.length ? `${owned.length} in your library` : '', incoming.size ? `${incoming.size} downloading` : '']);
 
   return (
     <>
-      <section className="card" style={{ marginTop: 'var(--gap)' }}>
-        <div className="card-head" style={{ flexWrap: 'wrap' }}>
-          <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
-            <Picker label="Season" value={season} onChange={chooseSeason} options={seasons.map((value) => {
-              const count = meta.episodes.filter((episode) => episode.season === value).length;
-              return { value, label: seasonName(value), hint: `${count} ep` };
-            })} />
-            <span className="muted num">{summary}</span>
-          </div>
-          <div className="row">
-            {seasonsMissing.length > 1 && <button className="btn" onClick={() => setEverything(true)}>Get all {seasonsMissing.length} seasons</button>}
-            <button className="btn" onClick={() => setPlan({})} disabled={!missing.length}>
-              {missing.length ? `Download ${seasonName(season).toLowerCase()}` : 'Season complete'}
-            </button>
-          </div>
+      <div className="season-bar">
+        <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
+          <Picker label="Season" value={season} onChange={chooseSeason} options={seasons.map((value) => {
+            const count = meta.episodes.filter((episode) => episode.season === value).length;
+            return { value, label: seasonName(value), hint: `${count} ep` };
+          })} />
+          <span className="muted num">{summary}</span>
         </div>
-        <SeasonMap episodes={episodes} incoming={incoming} selected={selected} onPick={pick} />
-      </section>
-
-      <div style={{ marginTop: 26 }}>
-        <TabBar value={tab} onChange={setTab} tabs={[{ value: 'episodes', label: 'Episodes', count: episodes.length }, { value: 'packs', label: 'Season packs' }]} />
+        <TabBar value={tab} onChange={(value) => { setTab(value); navigate(`/title/series/${meta.id}?season=${season}${value === 'download' ? '&tab=download' : ''}`, { replace: true }); }} tabs={[{ value: 'episodes', label: 'Episodes' }, { value: 'download', label: 'Download' }]} />
       </div>
 
       {tab === 'episodes' && (
-        <div className="table ep-table">
-          <div className="thead">
-            <span />
-            <span className="row" style={{ justifyContent: 'space-between' }}>
-              Episode
-              {missing.length > 1 && (
-                <button className="btn ghost sm" style={{ height: 24 }} onClick={() => setSelected(selected.size ? new Set() : new Set(missing.map((episode) => episode.episode)))}>
-                  {selected.size ? 'Clear selection' : `Select all ${missing.length} missing`}
-                </button>
-              )}
-            </span>
-            <span>Status</span>
-            <span />
-          </div>
+        <div className="episode-list">
           {episodes.map((episode) => (
             <EpisodeRow
               key={episode.id}
               meta={meta}
               episode={episode}
               incoming={incoming.get(episode.episode)}
-              selected={selected.has(episode.episode)}
-              onToggle={() => toggle(episode.episode)}
+              progress={progressOf.get(`${episode.season}:${episode.episode}`)}
               open={openEpisode === episode.episode}
               onOpen={() => setOpenEpisode(openEpisode === episode.episode ? null : episode.episode)}
             />
@@ -418,8 +409,25 @@ function SeriesView({ meta }: { meta: Meta }) {
         </div>
       )}
 
-      {tab === 'packs' && (
-        <div style={{ marginTop: 14 }}>
+      {tab === 'download' && (
+        <>
+          <section className="card" style={{ marginTop: 14 }}>
+            <div className="card-head" style={{ flexWrap: 'wrap' }}>
+              <div>
+                <h2>Download {seasonName(season).toLowerCase()}</h2>
+                <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>{missing.length ? `${missing.length} episode${missing.length === 1 ? '' : 's'} not in your library. Tap squares to pick some, or take the whole season.` : 'Every episode that is out is in your library.'}</p>
+              </div>
+              <div className="row">
+                {seasonsMissing.length > 1 && <button className="btn" onClick={() => setEverything(true)}>Get all {seasonsMissing.length} seasons</button>}
+                <button className="btn primary" onClick={() => setPlan({})} disabled={!missing.length}>
+                  {missing.length ? `Download ${seasonName(season).toLowerCase()}` : 'Season complete'}
+                </button>
+              </div>
+            </div>
+            <SeasonMap episodes={episodes} incoming={incoming} selected={selected} onPick={pick} />
+          </section>
+
+          <div className="section-title"><h2>Season packs</h2></div>
           {owned.length > 0 && missing.length > 0 && (
             <label className="row" style={{ marginBottom: 12, cursor: 'pointer' }}>
               <Toggle checked={packSkipOwned} onChange={setPackSkipOwned} label="Only take episodes I don't have" />
@@ -436,16 +444,16 @@ function SeriesView({ meta }: { meta: Meta }) {
               onDownload={downloadPack}
             />
           )}
-        </div>
-      )}
 
-      {selected.size > 0 && (
-        <div className="selection">
-          <span><b>{selected.size} selected</b> <span className="muted">{episodeRange([...selected])}</span></span>
-          <span className="grow" />
-          <button className="btn ghost sm" onClick={() => setSelected(new Set())}>Clear</button>
-          <button className="btn primary" onClick={() => setPlan({ episodes: [...selected].sort((a, b) => a - b) })}>Download selected</button>
-        </div>
+          {selected.size > 0 && (
+            <div className="selection">
+              <span><b>{selected.size} selected</b> <span className="muted">{episodeRange([...selected])}</span></span>
+              <span className="grow" />
+              <button className="btn ghost sm" onClick={() => setSelected(new Set())}>Clear</button>
+              <button className="btn primary" onClick={() => setPlan({ episodes: [...selected].sort((a, b) => a - b) })}>Download selected</button>
+            </div>
+          )}
+        </>
       )}
       {plan && <PlanSheet meta={meta} season={season} episodes={plan.episodes} onClose={() => { setPlan(null); setSelected(new Set()); }} />}
       {everything && <EverythingSheet meta={meta} seasons={seasonsMissing} onClose={() => setEverything(false)} />}
@@ -453,14 +461,19 @@ function SeriesView({ meta }: { meta: Meta }) {
   );
 }
 
-/** Follow a show or movie: Haul tells your phone when a torrent is out, and can download it right away. */
 function MovieView({ meta }: { meta: Meta }) {
   const download = useDownloader(meta);
   const { navigate } = useRouter();
   const releases = useAsync(() => api.movieReleases(meta.id), [meta.id]);
   return (
-    <section style={{ marginTop: 26 }} id="versions">
-      <div className="section-title" style={{ marginTop: 0 }}><h2>Versions</h2>{releases.data && <span className="faint num">{releases.data.releases.length} found</span>}</div>
+    <section style={{ marginTop: 30 }} id="versions">
+      <div className="section-title" style={{ marginTop: 0 }}>
+        <div>
+          <h2>Versions</h2>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>Press ▶ to watch one now from TorBox, or download it to your library.</p>
+        </div>
+        {releases.data && <span className="faint num">{releases.data.releases.length} found</span>}
+      </div>
       {releases.loading && <Loading text="Searching torrents and checking TorBox…" />}
       {releases.error && <ErrorNote message={releases.error} onRetry={releases.reload} />}
       {releases.data && <ReleaseTable releases={releases.data.releases} onStream={(release) => navigate(`/watch/movie/${meta.id}?hash=${release.hash}`)} onDownload={(release) => download([{ release }], meta.name)} />}
@@ -469,49 +482,48 @@ function MovieView({ meta }: { meta: Meta }) {
 }
 
 /** Play, Resume, or Play S01E01: your file when you have it, otherwise streamed from TorBox. */
-function PlayButton({ meta }: { meta: Meta }) {
-  const { data } = useAsync(() => api.continueWatching().catch(() => ({ items: [] })), [meta.id]);
-  const entry = data?.items.find((item) => item.imdbId === meta.id && item.type === meta.type);
+function PlayButton({ meta, resume }: { meta: Meta; resume?: WatchProgress }) {
   const first = meta.episodes.filter((episode) => episode.season > 0 && aired(episode)).sort((a, b) => a.season - b.season || a.episode - b.episode)[0];
-  const target = meta.type === 'series' ? (entry ? { season: entry.season!, episode: entry.episode! } : first) : undefined;
+  const target = meta.type === 'series' ? (resume ? { season: resume.season!, episode: resume.episode! } : first) : undefined;
   if (meta.type === 'series' && !target) return null;
   const code = target ? `S${String(target.season).padStart(2, '0')}E${String(target.episode).padStart(2, '0')}` : ''; // taste-skill-ignore: episode code
-  const left = entry && !entry.upNext && entry.duration ? Math.max(1, Math.round((entry.duration - entry.position) / 60)) : 0;
-  const label = entry && !entry.upNext ? `Resume${code ? ` ${code}` : ''}` : `Play${code ? ` ${code}` : ''}`;
+  const resuming = resume && !resume.upNext && resume.position > 30;
+  const label = resuming ? `Resume${code ? ` ${code}` : ''}` : `Play${code ? ` ${code}` : ''}`;
   const to = meta.type === 'series' ? `/watch/series/${meta.id}?s=${target!.season}&e=${target!.episode}` : `/watch/movie/${meta.id}`;
   return (
-    <Link to={to} className="btn primary" title={left ? `${left} min left` : undefined}>
-      <Play size={15} fill="currentColor" />{label}
+    <Link to={to} className="btn primary lg">
+      <Play size={17} fill="currentColor" />{label}
+      {resuming && resume.duration > 0 && <span className="btn-meta">{minutesLeft(resume)} min left</span>}
     </Link>
   );
 }
 
 export function TitlePage({ type, id }: { type: MediaType; id: string }) {
   const { data: meta, error, reload } = useAsync(() => api.meta(type, id), [type, id]);
+  const resume = useAsync(() => api.continueWatching().catch(() => ({ items: [] as WatchProgress[] })), [type, id]);
   useCrumb(meta?.name ?? null);
-  const [noCover, setNoCover] = useState(false);
   if (error) return <div className="canvas"><ErrorNote message={error} onRetry={reload} /></div>;
-  if (!meta) return <Loading />;
+  if (!meta) return <div className="canvas"><div className="hero medium skeleton-hero" /></div>;
   const seasonCount = meta.seasons.filter((season) => season > 0).length;
+  const entry = resume.data?.items.find((item) => item.imdbId === meta.id && item.type === meta.type);
+  const toVersions = () => document.getElementById('versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return (
-    <div className="canvas">
-      <section className="card object">
-        <div className="cover">{meta.poster && !noCover && <img src={meta.poster} alt="" onError={() => setNoCover(true)} />}</div>
-        <div className="info">
-          <h1>{meta.name}</h1>
-          <div className="meta">{join([meta.type === 'series' ? `${seasonCount} season${seasonCount === 1 ? '' : 's'}` : 'Movie', meta.releaseInfo, meta.runtime, (meta.genres ?? []).slice(0, 3).join(', '), meta.imdbRating && `IMDb ${meta.imdbRating}`, meta.type === 'series' && meta.status])}</div>
-          {meta.description && <p className="clamp-2">{meta.description}</p>}
-          {meta.cast?.length ? <div className="faint" style={{ fontSize: 13 }}>{meta.cast.slice(0, 4).join(', ')}</div> : null}
-          <div className="actions">
-            <PlayButton meta={meta} />
-            {meta.type === 'movie' && <button className="btn" onClick={() => document.getElementById('versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{meta.ownedMovie ? 'Get another version' : 'Download'}</button>}
-            <FollowControl target={{ type: meta.type, imdbId: meta.id, title: meta.name }} initial={meta.follow ?? null} />
-            {meta.ownedMovie && <span className="pill positive" style={{ alignSelf: 'center' }}>In your library</span>}
-          </div>
-        </div>
-        <div className="still" style={meta.background ? { backgroundImage: `url(${meta.background})` } : undefined} aria-hidden="true" />
-      </section>
-      {meta.type === 'series' ? <SeriesView meta={meta} /> : <MovieView meta={meta} />}
+    <div className="canvas title-page">
+      <Hero
+        size="medium"
+        background={meta.background}
+        logo={meta.logo}
+        title={meta.name}
+        facts={join([meta.type === 'series' ? `${seasonCount} season${seasonCount === 1 ? '' : 's'}` : 'Movie', meta.releaseInfo, meta.runtime, (meta.genres ?? []).slice(0, 3).join(', '), meta.imdbRating && `IMDb ${meta.imdbRating}`, meta.type === 'series' && meta.status])}
+        description={meta.description}
+        footer={meta.cast?.length ? <div className="hero-cast">Starring {meta.cast.slice(0, 4).join(', ')}</div> : null}
+      >
+        {resume.data && <PlayButton meta={meta} resume={entry} />}
+        <FollowControl target={{ type: meta.type, imdbId: meta.id, title: meta.name }} initial={meta.follow ?? null} />
+        {meta.type === 'movie' && <button className="btn glass" onClick={toVersions}><Download size={15} />{meta.ownedMovie ? 'Other versions' : 'Download'}</button>}
+        {meta.ownedMovie && <span className="pill positive" style={{ alignSelf: 'center' }}>In your library</span>}
+      </Hero>
+      {meta.type === 'series' ? <SeriesView key={meta.id} meta={meta} /> : <MovieView meta={meta} />}
     </div>
   );
 }

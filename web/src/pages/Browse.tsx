@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { MediaType, MetaPreview } from '../../../shared/types';
 import { api } from '../api';
-import { ErrorNote, Loading, PosterCard } from '../components/ui';
-import { useCrumb } from '../shell';
+import { ErrorNote, Loading, PosterCard, TabBar } from '../components/ui';
+import { useRouter } from '../lib';
 
 const GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'Horror', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller'];
 
@@ -14,9 +14,8 @@ export function Browse({ type, catalog }: { type: MediaType; catalog: string }) 
   const [error, setError] = useState<string>();
   const [done, setDone] = useState(false);
 
-  const noun = type === 'series' ? 'shows' : 'movies';
-  const title = catalog === 'top' ? `Popular ${noun}` : catalog === 'year' ? `New ${noun}` : `Top rated ${noun}`;
-  useCrumb(title);
+  const { navigate } = useRouter();
+  const title = type === 'series' ? 'Shows' : 'Movies';
 
   const load = async (skip: number) => {
     setLoading(true);
@@ -42,9 +41,10 @@ export function Browse({ type, catalog }: { type: MediaType; catalog: string }) 
   return (
     <div className="canvas">
       <div className="title-row"><h1>{title}</h1></div>
-      <div className="row" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 22 }}>
+      <TabBar value={catalog} onChange={(value) => navigate(`/browse/${type}/${value}`, { replace: true })} tabs={[{ value: 'top', label: 'Popular' }, { value: 'year', label: 'New' }, { value: 'imdbRating', label: 'Top rated' }]} />
+      <div className="chips browse-chips">
         {options.map((option) => (
-          <button key={option || 'all'} className={`btn sm ${genre === option ? 'primary' : ''}`} onClick={() => setGenre(option)}>{option || 'All genres'}</button>
+          <button key={option || 'all'} type="button" className="chip" aria-pressed={genre === option} onClick={() => setGenre(option)}>{option || (catalog === 'year' ? 'Any year' : 'All genres')}</button>
         ))}
       </div>
       {error && <ErrorNote message={error} onRetry={() => load(items.length)} />}

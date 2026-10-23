@@ -328,6 +328,8 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     ctx.json(200, saved);
   });
 
+  router.get('/api/progress/title/:type/:id', (ctx) => ctx.json(200, { items: progress.forTitle(ctx.params.type === 'series' ? 'series' : 'movie', ctx.params.id!) }));
+
   router.delete('/api/progress/:key', (ctx) => { progress.remove(ctx.params.key!); ctx.json(200, { ok: true }); });
 
   /** Unfinished titles, and for shows you finished an episode of, the next one. */

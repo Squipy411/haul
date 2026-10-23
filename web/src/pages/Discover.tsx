@@ -1,9 +1,10 @@
-import { Play, X } from 'lucide-react';
-import type { Job, WatchProgress } from '../../../shared/types';
+import { Download, Info, Play, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { Job, MetaPreview, WatchProgress } from '../../../shared/types';
 import { api } from '../api';
+import { Hero } from '../components/Hero';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
-import { Link, airDate, bytes, duration, episodeRange, pad, speed, useAsync, usePolling } from '../lib';
-import { useOpenSearch } from '../shell';
+import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib';
 
 const CATALOG_ID: Record<string, string> = { top: 'top', new: 'year', featured: 'imdbRating' };
 
@@ -50,36 +51,34 @@ function Transfers({ jobs }: { jobs: Job[] }) {
   );
 }
 
+/** Episodes of your shows that are out but not in your library: watch now from TorBox, or fetch them. */
 function NewEpisodes() {
-  const { data, error } = useAsync(() => api.newEpisodes(), []);
+  const { data } = useAsync(() => api.newEpisodes(), []);
   const shows = data?.shows ?? [];
+  if (!shows.length) return null;
   return (
-    <section className="card">
-      <div className="card-head">
-        <h2>New episodes of your shows</h2>
-        {shows.length > 0 && <span className="faint num" style={{ fontSize: 13 }}>{shows.reduce((sum, show) => sum + show.episodes.length, 0)} out</span>}
-      </div>
-      {!data && !error && <div className="skeleton" style={{ height: 120 }} />}
-      {error && <div className="notice">Couldn't check for new episodes right now.</div>}
-      {data && !shows.length && (
-        <div className="empty" style={{ padding: '6px 0' }}>
-          <b>You're up to date</b>
-          When a show in your library gets a new episode, it appears here.
-        </div>
-      )}
-      <div className="new-ep-list">
-      {shows.slice(0, 6).map((show) => (
-        <div key={show.imdbId} className="new-ep">
-          <Link to={`/title/series/${show.imdbId}?season=${show.season}`} className="still">{show.background && <img src={show.background} alt="" loading="lazy" />}</Link>
-          <div style={{ minWidth: 0 }}>
-            <Link to={`/title/series/${show.imdbId}?season=${show.season}`} className="name truncate" style={{ display: 'block' }}>{show.name}</Link>
-            <div className="meta truncate">
-              {join([`Season ${show.season}`, show.episodes.length === 1 ? `Episode ${show.episodes[0]!.episode}` : episodeRange(show.episodes.map((episode) => episode.episode)), show.latest && `latest ${airDate(show.latest)}`])}
+    <section className="watch-section">
+      <div className="section-title"><h2>New episodes of your shows</h2><span className="faint num" style={{ fontSize: 13 }}>{shows.reduce((sum, show) => sum + show.episodes.length, 0)} out</span></div>
+      <div className="shelf watch-shelf">
+        {shows.slice(0, 12).map((show) => {
+          const first = show.episodes[0]!;
+          const watch = `/watch/series/${show.imdbId}?s=${show.season}&e=${first.episode}`;
+          return (
+            <div key={show.imdbId} className="watch-card">
+              <Link to={watch} className="still" aria-label={`Watch ${show.name} season ${show.season} episode ${first.episode}`}>
+                {show.background && <img src={show.background} alt="" loading="lazy" />}
+                <span className="play-badge"><Play size={18} fill="currentColor" /></span>
+              </Link>
+              <div className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
+                <Link to={watch} style={{ minWidth: 0, flex: 1 }}>
+                  <div className="name truncate">{show.name}</div>
+                  <div className="meta truncate">{join([`S${pad(show.season)}E${pad(first.episode)}`, show.episodes.length > 1 ? `and ${show.episodes.length - 1} more` : first.title])}</div>
+                </Link>
+                <Link to={`/title/series/${show.imdbId}?season=${show.season}&get=new`} className="btn ghost sm icon" aria-label={`Download ${show.episodes.length} new episodes of ${show.name}`} title={`Download ${show.episodes.length}`}><Download size={14} /></Link>
+              </div>
             </div>
-          </div>
-          <Link to={`/title/series/${show.imdbId}?season=${show.season}&get=new`} className="btn sm">Get {show.episodes.length}</Link>
-        </div>
-      ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -171,26 +170,84 @@ function ComingUp() {
   );
 }
 
+/** Popular titles with artwork, taking turns at the top of Home. */
+function Featured({ rows, resume }: { rows: Array<{ id: string; items: MetaPreview[] }>; resume: WatchProgress[] }) {
+  const picks = (() => {
+    const shows = rows.find((row) => row.id === 'series-top')?.items ?? [];
+    const movies = rows.find((row) => row.id === 'movie-top')?.items ?? [];
+    const mixed: MetaPreview[] = [];
+    for (let index = 0; index < 4; index += 1) for (const list of [shows, movies]) if (list[index]?.background) mixed.push(list[index]!);
+    return mixed.slice(0, 6);
+  })();
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (paused || picks.length < 2) return;
+    const timer = window.setTimeout(() => setIndex((value) => (value + 1) % picks.length), 9000);
+    return () => window.clearTimeout(timer);
+  }, [index, paused, picks.length]);
+  const item = picks[index % Math.max(1, picks.length)];
+  if (!item) return null;
+  const entry = resume.find((progress) => progress.imdbId === item.id && progress.type === item.type);
+  const watch = item.type === 'series'
+    ? `/watch/series/${item.id}?s=${entry?.season ?? 1}&e=${entry?.episode ?? 1}`
+    : `/watch/movie/${item.id}`;
+  return (
+    <div onPointerEnter={() => setPaused(true)} onPointerLeave={() => setPaused(false)} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>
+      <Hero
+        key={item.id}
+        background={item.background}
+        logo={item.logo}
+        title={item.name}
+        facts={join([item.type === 'series' ? 'Series' : 'Movie', item.releaseInfo, (item.genres ?? []).slice(0, 3).join(', '), item.imdbRating && `IMDb ${item.imdbRating}`])}
+        description={item.description}
+        footer={picks.length > 1 && (
+          <div className="hero-dots" role="tablist" aria-label="Featured">
+            {picks.map((pick, position) => <button key={pick.id} role="tab" aria-selected={position === index} aria-label={pick.name} onClick={() => setIndex(position)} />)}
+          </div>
+        )}
+      >
+        <Link to={watch} className="btn primary lg"><Play size={17} fill="currentColor" />{entry && !entry.upNext ? 'Resume' : 'Play'}</Link>
+        <Link to={`/title/${item.type}/${item.id}`} className="btn lg glass"><Info size={17} />More info</Link>
+      </Hero>
+    </div>
+  );
+}
+
+/** Your own shows and films, newest first. */
+function YourLibrary() {
+  const { data } = useAsync(() => api.library(), []);
+  const items = (data?.items ?? []).filter((item) => item.imdbId).sort((a, b) => b.addedAt - a.addedAt);
+  const row = (type: 'series' | 'movie', title: string) => {
+    const list = items.filter((item) => item.type === type).slice(0, 20);
+    if (!list.length) return null;
+    return (
+      <section>
+        <div className="section-title"><h2>{title}</h2><Link to="/library" className="link">See all</Link></div>
+        <div className="shelf">{list.map((item) => <PosterCard key={item.id} item={{ id: item.imdbId!, type: item.type, name: item.title, poster: item.poster, releaseInfo: item.year ? String(item.year) : undefined, inLibrary: false }} />)}</div>
+      </section>
+    );
+  };
+  return <>{row('series', 'Your shows')}{row('movie', 'Your movies')}</>;
+}
+
 export function Discover() {
-  const openSearch = useOpenSearch();
   const { data, error, reload } = useAsync(() => api.home(), []);
+  const resume = useAsync(() => api.continueWatching().catch(() => ({ items: [] as WatchProgress[] })), []);
   const downloads = useAsync(() => api.downloads(), []);
   usePolling(() => { api.downloads().then(downloads.setData, () => undefined); }, 2000);
-  const activeCount = (downloads.data?.jobs ?? []).filter((job) => ['queued', 'torbox', 'downloading', 'paused'].includes(job.status)).length;
   return (
-    <div className="canvas">
-      <div className="title-row">
-        <div>
-          <h1>Home</h1>
-          <div className="sub">{activeCount ? `${activeCount} download${activeCount === 1 ? '' : 's'} in progress.` : 'Nothing downloading right now.'} Choose a show or a movie, and TorBox fetches it for you.</div>
-        </div>
-        <button className="btn primary" onClick={openSearch}>Find a title</button>
-      </div>
+    <div className="canvas home">
+      <h1 className="sr-only">Home</h1>
+      {data ? <Featured rows={data.rows} resume={resume.data?.items ?? []} /> : !error && <div className="hero large skeleton-hero" />}
       <ContinueWatching />
       <div className="home-top">
         <Transfers jobs={downloads.data?.jobs ?? []} />
+      </div>
+      <NewEpisodes />
+      <YourLibrary />
+      <div className="home-top">
         <ComingUp />
-        <NewEpisodes />
       </div>
       {error && <div style={{ marginTop: 20 }}><ErrorNote message={`The catalog didn't load: ${error}`} onRetry={reload} /></div>}
       {!data && !error && [0, 1].map((key) => (
