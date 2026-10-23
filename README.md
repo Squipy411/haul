@@ -18,6 +18,7 @@ You need a TorBox account and either Docker or a Windows PC.
 - **Pick single episodes**, or tick several and download just those.
 - **Films** get the same release table, best match first.
 - **Follow a show or a film** and get a phone notification the moment a torrent for the next episode is out, not just when it airs. Optionally let Haul download it right away.
+- **Wait for one exact version.** Following a film that isn't on digital yet? Tell Haul you only want, say, a 4K WEB-DL. It ignores cams, rips and everything else, and grabs the first 4K WEB-DL the moment one appears.
 - **See what's coming** on the Upcoming page: new episodes of everything you follow or own, from last week to six weeks ahead, with whether a torrent is out yet.
 - **Track progress** through TorBox → your machine → library, with pause, retry and cancel.
 - **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too.
@@ -107,6 +108,8 @@ Haul sends notifications through [ntfy](https://ntfy.sh), a free push service wi
 Then open any show or film and choose **Follow**. Haul checks your sources every 5 minutes on the day an episode comes out, every 30 minutes for the rest of the week and every few hours after that, and notifies you the first time a usable torrent turns up (camera copies don't count). Tapping the notification opens the title in Haul.
 
 With **Download automatically** on, Haul starts the download as soon as a version in your preferred resolution appears. If only a lower resolution is out, it tells you and waits up to 12 hours for a better one before taking the best available.
+
+To hold out for one particular version, choose **Which versions** when you follow: any mix of quality (4K, 1080p, 720p), source (WEB-DL, WEBRip, BluRay, Remux) and HDR (Dolby Vision, HDR10, none). Everything else is ignored, and with **Grab the first match** on, the first matching torrent is downloaded the moment it shows up. Films are checked every 20 minutes once they're out. Haul also skips trailers and prologues, uploads that say they're a different film with the same name, and telesyncs labelled as WEB-DL. You can change the versions later from the title page or Upcoming → Following.
 
 The topic is a long random name. On ntfy.sh anyone who knows it can read your notifications, so treat it like a password, or point Haul at your own ntfy server (with an access token if it needs sign-in). You can also add a Discord webhook. Notifications are off until you turn them on, so a fresh install never sends anything.
 

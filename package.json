@@ -1,7 +1,7 @@
 {
   "name": "haul",
   "productName": "Haul",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "All-in-one TorBox media downloader: browse, pick a season pack or a whole season, and Haul downloads, renames and hosts it for Nuvio and Stremio.",
   "author": "Squipy411",
   "license": "MIT",

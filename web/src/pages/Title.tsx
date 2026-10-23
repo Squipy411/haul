@@ -1,7 +1,7 @@
-import { Bell, BellRing } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { Episode, Follow, Job, MediaType, Meta, Release, SeasonPlan } from '../../../shared/types';
 import { api } from '../api';
+import { FollowControl } from '../components/Follow';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
 import { Empty, ErrorNote, Loading, Menu, Picker, Sheet, TabBar, Tick, Toggle, join } from '../components/ui';
 import { airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
@@ -348,77 +348,6 @@ function SeriesView({ meta }: { meta: Meta }) {
 }
 
 /** Follow a show or movie: Haul tells your phone when a torrent is out, and can download it right away. */
-function FollowControl({ meta }: { meta: Meta }) {
-  const toast = useToast();
-  const { navigate } = useRouter();
-  const [follow, setFollow] = useState<Follow | null>(meta.follow ?? null);
-  const [asking, setAsking] = useState(false);
-  const [auto, setAuto] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const isSeries = meta.type === 'series';
-
-  const start = async () => {
-    setBusy(true);
-    try {
-      const result = await api.follow(meta.type, meta.id, auto);
-      setFollow(result.follow);
-      setAsking(false);
-      toast(result.notificationsReady
-        ? `Following ${meta.name}. You'll get a notification as soon as ${isSeries ? 'a new episode' : 'it'} is out on torrent.`
-        : <span>Following {meta.name}. Set up phone notifications in <a href="/settings" style={{ textDecoration: 'underline' }} onClick={(event) => { event.preventDefault(); navigate('/settings'); }}>Settings</a> to get alerts.</span>);
-    } catch (error) {
-      toast((error as Error).message, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (follow) {
-    return (
-      <Menu
-        label={`Following ${meta.name}`}
-        trigger={<button className="btn"><BellRing size={15} />Following{follow.autoDownload ? ' · auto-download' : ''}</button>}
-        actions={[
-          { label: follow.autoDownload ? 'Stop downloading automatically' : `Download ${isSeries ? 'new episodes' : 'it'} automatically`, onSelect: async () => setFollow((await api.updateFollow(follow.id, !follow.autoDownload)).follow) },
-          'separator',
-          { label: 'Unfollow', danger: true, onSelect: async () => { await api.unfollow(follow.id); setFollow(null); toast(`Stopped following ${meta.name}`); } }
-        ]}
-      />
-    );
-  }
-
-  return (
-    <>
-      <button className="btn" onClick={() => setAsking(true)}><Bell size={15} />Follow</button>
-      <Sheet
-        open={asking}
-        onOpenChange={setAsking}
-        title={`Follow ${meta.name}`}
-        description={isSeries
-          ? 'Haul checks the torrent sources for each new episode from the moment it airs (every 5 minutes on the first day) and notifies your phone as soon as one is out.'
-          : 'Haul checks the torrent sources for this movie and notifies your phone as soon as a proper copy is out. Camera recordings are ignored.'}
-        footer={
-          <>
-            <span className="hint">{isSeries ? 'Episodes already out more than 3 days are left to you.' : ''}</span>
-            <div className="row">
-              <button className="btn ghost" onClick={() => setAsking(false)}>Cancel</button>
-              <button className="btn primary" disabled={busy} onClick={start}>{busy && <span className="spinner" />}Follow</button>
-            </div>
-          </>
-        }
-      >
-        <div className="panel" style={{ background: 'var(--raised)' }}>
-          <div className="switch-row">
-            <b>Download {isSeries ? 'new episodes' : 'it'} automatically</b>
-            <Toggle checked={auto} onChange={setAuto} label="Download automatically" />
-            <small>Haul takes the best version that meets your quality settings. If only a lower quality is out, it tells you and waits up to 12 hours for a better one.</small>
-          </div>
-        </div>
-      </Sheet>
-    </>
-  );
-}
-
 function MovieView({ meta }: { meta: Meta }) {
   const download = useDownloader(meta);
   const releases = useAsync(() => api.movieReleases(meta.id), [meta.id]);
@@ -450,7 +379,7 @@ export function TitlePage({ type, id }: { type: MediaType; id: string }) {
           {meta.cast?.length ? <div className="faint" style={{ fontSize: 13 }}>{meta.cast.slice(0, 4).join(', ')}</div> : null}
           <div className="actions">
             {meta.type === 'movie' && <button className="btn primary" onClick={() => document.getElementById('versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{meta.ownedMovie ? 'Get another version' : 'Choose a version'}</button>}
-            <FollowControl meta={meta} />
+            <FollowControl target={{ type: meta.type, imdbId: meta.id, title: meta.name }} initial={meta.follow ?? null} />
             {meta.ownedMovie && <span className="pill positive" style={{ alignSelf: 'center' }}>In your library</span>}
           </div>
         </div>

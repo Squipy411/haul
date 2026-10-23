@@ -2,6 +2,7 @@ import { BellRing } from 'lucide-react';
 import { useState } from 'react';
 import type { Follow, ScheduleItem } from '../../../shared/types';
 import { api } from '../api';
+import { FollowSheet, describeWant, isStrict } from '../components/Follow';
 import { Empty, ErrorNote, Loading, TabBar, Toggle, join } from '../components/ui';
 import { Link, ago, pad, useAsync, usePolling, useToast } from '../lib';
 
@@ -101,12 +102,14 @@ function Schedule() {
 function Following() {
   const toast = useToast();
   const { data, error, reload, setData } = useAsync(() => api.follows(), []);
+  const [editing, setEditing] = useState<Follow | null>(null);
   if (error) return <ErrorNote message={error} onRetry={reload} />;
   if (!data) return <Loading />;
   if (!data.follows.length) return <Empty title="You're not following anything">Open a show or a movie and choose Follow. Haul then tells you as soon as a torrent is out.</Empty>;
   const update = (next: Follow) => setData({ follows: data.follows.map((follow) => (follow.id === next.id ? next : follow)) });
   return (
     <div className="table" style={{ marginTop: 10 }}>
+      {editing && <FollowSheet open onOpenChange={(open) => { if (!open) setEditing(null); }} target={{ type: editing.type, imdbId: editing.imdbId, title: editing.title }} follow={editing} onSaved={(next) => { update(next); toast('Follow updated'); }} />}
       {data.follows.map((follow) => {
         const hits = Object.values(follow.found);
         const latest = hits.reduce((max, hit) => Math.max(max, hit.foundAt), 0);
@@ -116,13 +119,15 @@ function Following() {
               <div className="poster-thumb">{follow.poster && <img src={follow.poster} alt="" loading="lazy" />}</div>
               <div style={{ minWidth: 0 }}>
                 <div className="t1 truncate">{follow.title}</div>
-                <div className="t2">{join([follow.type === 'series' ? 'Show' : 'Movie', `following since ${new Date(follow.createdAt).toLocaleDateString()}`, hits.length ? `${hits.length} found, latest ${ago(latest)}` : 'nothing found yet'])}</div>
+                <div className="t2">{join([follow.type === 'series' ? 'Show' : 'Movie', isStrict(follow.want) ? `only ${describeWant(follow.want)}` : 'any version', hits.length ? `${hits.length} found, latest ${ago(latest)}` : 'nothing found yet'])}</div>
               </div>
             </Link>
             <label className="row" style={{ gap: 10, cursor: 'pointer' }}>
               <span className="muted hide-sm" style={{ fontSize: 13 }}>Download automatically</span>
-              <Toggle checked={follow.autoDownload} onChange={async (value) => update((await api.updateFollow(follow.id, value)).follow)} label={`Download ${follow.title} automatically`} />
+              <span className="muted only-sm" style={{ fontSize: 13 }}>Auto-download</span>
+              <Toggle checked={follow.autoDownload} onChange={async (value) => update((await api.updateFollow(follow.id, { autoDownload: value })).follow)} label={`Download ${follow.title} automatically`} />
             </label>
+            <button className="btn sm" onClick={() => setEditing(follow)}>Versions</button>
             <button className="btn ghost sm" onClick={async () => { await api.unfollow(follow.id); setData({ follows: data.follows.filter((item) => item.id !== follow.id) }); toast(`Stopped following ${follow.title}`); }}>Unfollow</button>
           </div>
         );

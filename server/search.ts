@@ -89,7 +89,11 @@ export function scoreRelease(release: Omit<Release, 'score'>, quality: Quality, 
   return Math.round(score);
 }
 
+/** Uploads that say they're a different film with the same name ("NOT The Chris Nolan FILM"). */
+const DISOWNED = /\bnot[ ._-]+the\b.{0,40}?\b(film|movie)\b/i;
+
 function blocked(name: string, words: string[]): boolean {
+  if (DISOWNED.test(name)) return true;
   const lower = name.toLowerCase();
   return words.some((word) => word && lower.includes(word.toLowerCase()));
 }

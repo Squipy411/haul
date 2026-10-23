@@ -12,7 +12,7 @@ import type { Library } from './library.js';
 import type { SearchService } from './search.js';
 import type { SettingsService } from './settings.js';
 import type { Torbox } from './torbox.js';
-import type { FollowService } from './follows.js';
+import { cleanFilter, type FollowService } from './follows.js';
 import type { Notifier } from './notify.js';
 import type { UpdateChecker } from './updates.js';
 
@@ -350,12 +350,12 @@ export function registerApi(router: Router, deps: Deps): void {
   router.post('/api/follows', async (ctx) => {
     const body = await ctx.body();
     const meta = await catalog.meta(asType(body.type), asImdb(body.imdbId));
-    ctx.json(200, { follow: follows.follow(meta, body.autoDownload === true), notificationsReady: notifier.configured });
+    ctx.json(200, { follow: follows.follow(meta, body.autoDownload === true, cleanFilter(body.want)), notificationsReady: notifier.configured });
   });
 
   router.post('/api/follows/:id', async (ctx) => {
     const body = await ctx.body();
-    const follow = follows.update(ctx.params.id!, { autoDownload: body.autoDownload });
+    const follow = follows.update(ctx.params.id!, { autoDownload: body.autoDownload, want: body.want === undefined ? undefined : cleanFilter(body.want) ?? null });
     if (!follow) throw new HttpError(404, 'Not following that');
     ctx.json(200, { follow });
   });

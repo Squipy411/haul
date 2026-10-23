@@ -13,6 +13,8 @@ const RESOLUTIONS: Array<[RegExp, Resolution]> = [
   [tok('480p|576p|360p|sd|dvdrip|dvd|xvid'), '480p']
 ];
 
+const CAM_TAGS = tok('cam|camrip|hdcam|ts|telesync|hdts|tc|telecine|scr|screener|hdtc|predvd');
+
 const SOURCES: Array<[RegExp, string]> = [
   [tok('remux|bdremux'), 'REMUX'],
   [tok('blu-?ray|bdrip|brrip|bd25|bd50|uhd-?bluray'), 'BluRay'],
@@ -20,7 +22,7 @@ const SOURCES: Array<[RegExp, string]> = [
   [tok('web-?dl|web|amzn|nf|dsnp|hmax|atvp|pcok|pmtp|itunes'), 'WEB-DL'],
   [tok('hdtv|pdtv|dsr|tvrip'), 'HDTV'],
   [tok('dvd-?rip|dvd|dvd5|dvd9'), 'DVD'],
-  [tok('cam|camrip|hdcam|ts|telesync|hdts|tc|telecine|scr|screener|hdtc|predvd'), 'CAM']
+  [CAM_TAGS, 'CAM']
 ];
 
 const LANGUAGE_TOKENS: Array<[RegExp, string]> = [
@@ -103,7 +105,9 @@ export function parseRelease(raw: string): ReleaseInfo {
   const name = raw.replace(/[_]/g, ' ');
   const resolution = RESOLUTIONS.find(([pattern]) => pattern.test(name))?.[1] ?? 'unknown';
   let source = SOURCES.find(([pattern]) => pattern.test(name))?.[1];
-  if (source === 'CAM' && /(?<![a-z0-9])ts(?![a-z0-9])/i.test(name) && /web|blu-?ray|hdtv/i.test(name)) source = undefined;
+  // A cinema recording stays one when it's also tagged WEB or BluRay, as in "1080p TS V2 WEB.DL".
+  // A trailing ".ts" is a file extension, not a telesync.
+  if (CAM_TAGS.test(name.replace(/\.ts$/i, ''))) source = 'CAM';
   if (!source && /web/i.test(name)) source = 'WEB-DL';
 
   const hdr: string[] = [];

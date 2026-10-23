@@ -144,6 +144,15 @@ export interface Status {
 }
 
 /** A show or movie you follow: Haul watches the torrent sources for it. */
+/** Which versions a follow accepts. An empty list accepts anything. */
+export interface VersionFilter {
+  resolutions: Resolution[];
+  /** As parsed: 'WEB-DL' (includes scene "WEB"), 'WEBRip', 'BluRay', 'REMUX'. */
+  sources: string[];
+  /** 'DV' Dolby Vision, 'HDR' HDR10/HDR10+, 'SDR' no HDR. */
+  hdr: Array<'DV' | 'HDR' | 'SDR'>;
+}
+
 export interface Follow {
   id: string;
   type: MediaType;
@@ -156,6 +165,8 @@ export interface Follow {
   createdAt: number;
   /** Series: only episodes after this one count as new. */
   since?: { season: number; episode: number };
+  /** Only these versions count. Set, Haul ignores everything else and takes the first match at once. */
+  want?: VersionFilter;
   /** Per episode ("8:12") or "movie": what Haul has found and done. */
   found: Record<string, FollowHit>;
 }

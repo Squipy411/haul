@@ -22,6 +22,13 @@ describe('parseRelease', () => {
     expect(parseRelease('Movie 2025 1080p WEB-DL DTS x264').lowQuality).toBe(false);
   });
 
+  it('keeps a telesync a telesync even when it claims to be WEB-DL', () => {
+    expect(parseRelease('The-Odyssey-2026-1080p-TS-V2-WEB.DL-GP-M-NLsubs').lowQuality).toBe(true);
+    expect(parseRelease('Movie.2026.1080p.HDTS.WEBRip.x264').source).toBe('CAM');
+    expect(parseRelease('Movie.2026.2160p.AMZN.WEB-DL.DDP5.1.Atmos.DV.H.265-FLUX').lowQuality).toBe(false);
+    expect(parseRelease('Movie.2026.1080p.WEB-DL.x264.ts').source).toBe('WEB-DL');
+  });
+
   it('notices upscales and foreign-only releases', () => {
     expect(parseRelease('Breaking Bad. S01. 2008 2160P.Ai Upscaled.BluRay').upscaled).toBe(true);
     expect(parseRelease('Во все тяжкие / Breaking Bad / Сезон: 1 / Серии: 1-7 из 7').languages).toContain('RU');

@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Follow, FollowHit, Job, Meta, Release, ScheduleItem } from '../shared/types.js';
+import type { Follow, FollowHit, Job, LibraryFile, Meta, Release, ReleaseInfo, ScheduleItem, VersionFilter } from '../shared/types.js';
 import * as catalog from './catalog.js';
 import type { ServerOptions } from './config.js';
 import type { JobManager } from './jobs.js';
 import type { Library } from './library.js';
 import type { Notifier } from './notify.js';
-import { resolutionRank } from './release.js';
+import { parseTitleYear, resolutionRank } from './release.js';
 import type { SearchService } from './search.js';
 import type { SettingsService } from './settings.js';
 import { JsonFile } from './store.js';
@@ -28,6 +28,51 @@ const DAY = 24 * HOUR;
 const WAIT_FOR_BETTER = 12 * HOUR;
 const pad = (value: number) => String(value).padStart(2, '0');
 const RES: Record<string, string> = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': 'SD', unknown: 'unknown quality' };
+const RESOLUTIONS = new Set(['2160p', '1080p', '720p']);
+/** Not the film or episode itself. */
+const EXTRAS = /\b(trailer|teaser|prologue|featurettes?|making[ ._-]of|behind[ ._-]the[ ._-]scenes|sample)\b/i;
+const SOURCES = new Set(['WEB-DL', 'WEBRip', 'BluRay', 'REMUX']);
+const HDRS = new Set(['DV', 'HDR', 'SDR']);
+
+/** Keeps only known values, so a stored filter is always one the UI can show. */
+export function cleanFilter(value: unknown): VersionFilter | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const pick = <T extends string>(list: unknown, allowed: Set<string>) => [...new Set(Array.isArray(list) ? list.filter((item): item is T => typeof item === 'string' && allowed.has(item)) : [])];
+  const filter: VersionFilter = { resolutions: pick(raw.resolutions, RESOLUTIONS), sources: pick(raw.sources, SOURCES), hdr: pick(raw.hdr, HDRS) };
+  return isStrict(filter) ? filter : undefined;
+}
+
+export const isStrict = (filter?: VersionFilter): filter is VersionFilter => Boolean(filter && (filter.resolutions.length || filter.sources.length || filter.hdr.length));
+
+function matchesHdr(tags: string[], wanted: VersionFilter['hdr']): boolean {
+  if (!wanted.length) return true;
+  const dv = tags.includes('DV');
+  const hdr = tags.some((tag) => tag === 'HDR' || tag === 'HDR10' || tag === 'HDR10+');
+  return wanted.some((kind) => (kind === 'DV' ? dv : kind === 'HDR' ? hdr : !dv && !hdr));
+}
+
+/** Whether a release is one of the versions a follow asks for. */
+export function matchesFilter(info: ReleaseInfo, filter: VersionFilter): boolean {
+  return (!filter.resolutions.length || filter.resolutions.includes(info.resolution))
+    && (!filter.sources.length || (info.source !== undefined && filter.sources.includes(info.source)))
+    && matchesHdr(info.hdr, filter.hdr);
+}
+
+function fileMatches(file: LibraryFile, filter: VersionFilter): boolean {
+  return (!filter.resolutions.length || (file.resolution !== undefined && filter.resolutions.includes(file.resolution)))
+    && (!filter.sources.length || filter.sources.some((source) => file.tags.includes(source)))
+    && matchesHdr(file.tags, filter.hdr);
+}
+
+/** "4K WEB-DL Dolby Vision", for notifications and labels. */
+export function describeFilter(filter?: VersionFilter): string {
+  if (!isStrict(filter)) return 'any version';
+  const hdr = filter.hdr.map((kind) => (kind === 'DV' ? 'Dolby Vision' : kind === 'HDR' ? 'HDR' : 'SDR'));
+  return [filter.resolutions.map((value) => RES[value]).join('/'), filter.sources.join('/'), hdr.join('/')].filter(Boolean).join(' ');
+}
+
+const describeRelease = (info: ReleaseInfo) => [RES[info.resolution], info.source, info.hdr.includes('DV') ? 'Dolby Vision' : info.hdr.length ? 'HDR' : ''].filter(Boolean).join(' ');
 
 /** How often to look for a torrent, by how long ago the episode or movie came out. */
 export function checkInterval(age: number): number | null {
@@ -75,13 +120,9 @@ export class FollowService {
     return this.follows.find((follow) => follow.type === type && follow.imdbId === imdbId);
   }
 
-  follow(meta: Meta, autoDownload: boolean): Follow {
+  follow(meta: Meta, autoDownload: boolean, want?: VersionFilter): Follow {
     const existing = this.find(meta.type, meta.id);
-    if (existing) {
-      existing.autoDownload = autoDownload;
-      this.file.save();
-      return existing;
-    }
+    if (existing) return this.update(existing.id, { autoDownload, want: want ?? null })!;
     // Episodes that came out more than three days ago are the backlog, not news.
     const settled = meta.episodes.filter((episode) => episode.season > 0 && episode.released && Date.parse(episode.released) < Date.now() - 3 * DAY);
     const last = settled[settled.length - 1];
@@ -95,6 +136,7 @@ export class FollowService {
       autoDownload,
       createdAt: Date.now(),
       since: meta.type === 'series' && last ? { season: last.season, episode: last.episode } : undefined,
+      want: isStrict(want) ? want : undefined,
       found: {}
     };
     this.follows.unshift(follow);
@@ -104,13 +146,48 @@ export class FollowService {
     return follow;
   }
 
-  update(id: string, patch: { autoDownload?: boolean }): Follow | undefined {
+  /** `want: null` clears the version filter; leaving it out keeps it. */
+  update(id: string, patch: { autoDownload?: boolean; want?: VersionFilter | null }): Follow | undefined {
     const follow = this.follows.find((item) => item.id === id);
     if (!follow) return undefined;
     if (typeof patch.autoDownload === 'boolean') follow.autoDownload = patch.autoDownload;
+    if (patch.want !== undefined) {
+      const next = isStrict(patch.want ?? undefined) ? patch.want! : undefined;
+      if (JSON.stringify(next) !== JSON.stringify(follow.want)) {
+        follow.want = next;
+        // What was found under the old filter no longer counts; look again straight away.
+        for (const [key, hit] of Object.entries(follow.found)) if (!hit.downloadedAt) delete follow.found[key];
+        for (const key of [...this.lastCheck.keys()]) if (key.startsWith(`${follow.id}:`)) this.lastCheck.delete(key);
+      }
+    }
     this.file.save();
-    if (follow.autoDownload) void this.tick();
+    void this.tick();
     return follow;
+  }
+
+  /** Releases worth acting on. With a version filter, only exact matches, whatever the global settings say. */
+  private usable(follow: Follow, releases: Release[]): Release[] {
+    const { quality } = this.deps.settings.value;
+    releases = releases.filter((release) => {
+      if (EXTRAS.test(release.name)) return false;
+      if (follow.type !== 'movie' || !follow.year) return true;
+      const year = parseTitleYear(release.name).year;
+      return !year || Math.abs(year - follow.year) <= 1;
+    });
+    if (isStrict(follow.want)) {
+      const want = follow.want;
+      return releases.filter(({ info }) => matchesFilter(info, want) && !info.lowQuality && !info.threeD
+        && (quality.allowUpscaled || !info.upscaled)
+        && !(info.languages.length && !info.languages.some((language) => language === 'MULTI' || language === 'DUAL')));
+    }
+    return releases.filter((release) => release.score > 0 && !release.info.lowQuality
+      && (follow.type === 'series' || resolutionRank(release.info.resolution) >= resolutionRank('720p')));
+  }
+
+  private ownsMovie(follow: Follow): boolean {
+    if (!isStrict(follow.want)) return this.deps.library.ownsMovie(follow.imdbId);
+    const want = follow.want;
+    return this.deps.library.byImdb('movie', follow.imdbId).some((item) => item.files.some((file) => fileMatches(file, want)));
   }
 
   unfollow(id: string): void {
@@ -160,7 +237,7 @@ export class FollowService {
       if (hit && !follow.autoDownload) continue;
       if (!this.due(`${follow.id}:${key}`, Date.parse(episode.released!))) continue;
       const releases = await this.deps.search.episode(follow.imdbId, episode.season, episode.episode, { fresh: true });
-      const usable = releases.filter((release) => release.score > 0 && !release.info.lowQuality);
+      const usable = this.usable(follow, releases);
       if (!usable.length) continue;
       const code = `S${pad(episode.season)}E${pad(episode.episode)}`;
       await this.handleFound(follow, meta, key, usable, {
@@ -173,24 +250,30 @@ export class FollowService {
   }
 
   private async checkMovie(follow: Follow): Promise<void> {
-    if (follow.found.movie?.downloadedAt || this.deps.library.ownsMovie(follow.imdbId)) return;
+    if (follow.found.movie?.downloadedAt || this.ownsMovie(follow)) return;
     if (follow.found.movie && !follow.autoDownload) return;
-    const meta = await this.deps.catalog.meta('movie', follow.imdbId);
-    // Before its release date a film is checked twice a day; afterwards as often as a new episode.
-    const released = meta.released ? Date.parse(meta.released) : follow.createdAt;
     const key = `${follow.id}:movie`;
-    const interval = Date.now() < released ? 12 * HOUR : checkInterval(Date.now() - released) ?? 6 * HOUR;
-    if (Date.now() - (this.lastCheck.get(key) ?? 0) < interval) return;
+    // Cinemeta knows the cinema date, not the digital one, so once a film is out it's checked every
+    // 20 minutes until a version turns up (every 5 on the day itself), and twice a day before that.
+    const last = this.lastCheck.get(key) ?? 0;
+    if (Date.now() - last < 5 * MINUTE) return;
+    const meta = await this.deps.catalog.meta('movie', follow.imdbId);
+    const released = meta.released ? Date.parse(meta.released) : follow.createdAt;
+    const age = Date.now() - released;
+    const interval = age < 0 ? 12 * HOUR : age < DAY ? 5 * MINUTE : 20 * MINUTE;
+    if (Date.now() - last < interval) return;
     this.lastCheck.set(key, Date.now());
     const releases = await this.deps.search.movie(follow.imdbId, { fresh: true });
-    const usable = releases.filter((release) => release.score > 0 && !release.info.lowQuality && resolutionRank(release.info.resolution) >= resolutionRank('720p'));
+    const usable = this.usable(follow, releases);
     if (!usable.length) return;
     await this.handleFound(follow, meta, 'movie', usable, { label: follow.title, path: `/title/movie/${follow.imdbId}` });
   }
 
   private async handleFound(follow: Follow, meta: Meta, key: string, usable: Release[], target: { label: string; path: string; season?: number; episodes?: number[] }): Promise<void> {
     const preferred = this.deps.settings.value.quality.preferred;
-    const meets = (release: Release) => preferred === 'any' || resolutionRank(release.info.resolution) >= resolutionRank(preferred);
+    const strict = isStrict(follow.want);
+    // A version filter is the user's exact choice, so the first match is taken; otherwise wait a while for the preferred resolution.
+    const meets = (release: Release) => strict || preferred === 'any' || resolutionRank(release.info.resolution) >= resolutionRank(preferred);
     const best = usable[0]!;
     const bestPreferred = usable.find(meets);
     let hit: FollowHit | undefined = follow.found[key];
@@ -207,7 +290,7 @@ export class FollowService {
         Object.assign(hit, { downloadedAt: Date.now(), jobId: job.id, release: pick.name, resolution: pick.info.resolution, cached: pick.cached, waitingForBetter: false });
         await this.deps.notifier.send({
           title: `${target.label} is downloading`,
-          message: `${RES[pick.info.resolution]}${pick.cached ? ', ready now on TorBox' : ', TorBox is fetching it'}. ${pick.name}`,
+          message: `${describeRelease(pick.info)}${pick.cached ? ', ready now on TorBox' : ', TorBox is fetching it'}. ${pick.name}`,
           path: target.path,
           priority: 4,
           tags: ['arrow_down']
@@ -231,8 +314,8 @@ export class FollowService {
 
     if (firstSighting) {
       await this.deps.notifier.send({
-        title: `${target.label} is available`,
-        message: `${RES[best.info.resolution]}${best.cached ? ', ready now on TorBox' : ''}. ${usable.length} version${usable.length === 1 ? '' : 's'} found.`,
+        title: strict ? `${target.label} is out in ${describeFilter(follow.want)}` : `${target.label} is available`,
+        message: `${describeRelease(best.info)}${best.cached ? ', ready now on TorBox' : ''}. ${usable.length} matching version${usable.length === 1 ? '' : 's'} found.`,
         path: target.path,
         priority: 4,
         tags: ['tv']
@@ -284,7 +367,7 @@ export class FollowService {
         items.push({
           imdbId: follow.imdbId, type: 'movie', title: meta.name, poster: meta.poster, background: meta.background, released: meta.released,
           followed: true,
-          state: this.deps.library.ownsMovie(follow.imdbId) ? 'owned' : hit?.downloadedAt ? 'downloading' : hit ? 'available' : Date.parse(meta.released) > now ? 'upcoming' : 'searching',
+          state: this.ownsMovie(follow) ? 'owned' : hit?.downloadedAt ? 'downloading' : hit ? 'available' : Date.parse(meta.released) > now ? 'upcoming' : 'searching',
           release: hit?.release
         });
       } catch { /* skip */ }

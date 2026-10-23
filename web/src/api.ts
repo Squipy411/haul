@@ -1,6 +1,4 @@
-import type {
-  AddonInfo, Follow, HomeRow, ScheduleItem, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, Release, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount
-} from '../../shared/types';
+import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -68,8 +66,8 @@ export const api = {
   matchLibraryItem: (id: string, imdbId: string | null) => request<LibraryItem>('POST', `/api/library/${id}/match`, { imdbId }),
 
   follows: () => request<{ follows: Follow[] }>('GET', '/api/follows'),
-  follow: (type: MediaType, imdbId: string, autoDownload: boolean) => request<{ follow: Follow; notificationsReady: boolean }>('POST', '/api/follows', { type, imdbId, autoDownload }),
-  updateFollow: (id: string, autoDownload: boolean) => request<{ follow: Follow }>('POST', `/api/follows/${id}`, { autoDownload }),
+  follow: (type: MediaType, imdbId: string, autoDownload: boolean, want?: VersionFilter) => request<{ follow: Follow; notificationsReady: boolean }>('POST', '/api/follows', { type, imdbId, autoDownload, want }),
+  updateFollow: (id: string, patch: { autoDownload?: boolean; want?: VersionFilter | null }) => request<{ follow: Follow }>('POST', `/api/follows/${id}`, patch),
   unfollow: (id: string) => request<{ ok: true }>('DELETE', `/api/follows/${id}`),
   schedule: () => request<{ items: ScheduleItem[] }>('GET', '/api/schedule'),
   testNotification: () => request<{ ok: true }>('POST', '/api/notifications/test'),
