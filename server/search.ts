@@ -1,5 +1,5 @@
 import type { PackFile, Release, ReleaseKind, SeasonPlan, SeasonPlanItem, Settings } from '../shared/types.js';
-import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, parseEpisodeFile, parseRelease, resolutionRank } from './release.js';
+import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile, parseRelease, resolutionRank } from './release.js';
 import { type RawResult, stremioSource, torboxSearch } from './sources.js';
 import type { CachedTorrent, Torbox } from './torbox.js';
 
@@ -77,7 +77,7 @@ export function scoreRelease(release: Omit<Release, 'score'>, quality: Quality, 
   // An uncached complete-series pack makes TorBox fetch every season first.
   if (release.kind === 'multi-season' && !release.cached) score -= 12;
   if (release.kind === 'season') score += 2;
-  const foreignOnly = info.languages.length > 0 && !info.languages.some((language) => language === 'MULTI' || language === 'DUAL');
+  const foreignOnly = isForeignOnly(info);
   if (foreignOnly) score -= 30;
   const perItem = release.kind === 'movie' || release.kind === 'episode'
     ? release.fileSize ?? release.totalSize

@@ -28,6 +28,7 @@ const SOURCES: Array<[RegExp, string]> = [
 const LANGUAGE_TOKENS: Array<[RegExp, string]> = [
   [tok('multi'), 'MULTI'],
   [tok('dual[ .-]?audio|dual'), 'DUAL'],
+  [tok('eng|english'), 'EN'],
   [tok('rus|russian'), 'RU'],
   [tok('ita|italian'), 'IT'],
   [tok('fre|french|vff|vf2|truefrench'), 'FR'],
@@ -99,6 +100,11 @@ export function parseSeasonsAndEpisodes(raw: string): { seasons: number[]; episo
     episodes: unique(episodes.filter((value) => value > 0 && value < 2000)).sort((a, b) => a - b),
     complete
   };
+}
+
+/** Dubbed into another language with no English or original track. */
+export function isForeignOnly(info: Pick<ReleaseInfo, 'languages'>): boolean {
+  return info.languages.length > 0 && !info.languages.some((language) => language === 'MULTI' || language === 'DUAL' || language === 'EN');
 }
 
 export function parseRelease(raw: string): ReleaseInfo {

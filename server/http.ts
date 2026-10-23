@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { parseByteRange } from './range.js';
 
 export interface Context {
   req: IncomingMessage;
@@ -127,6 +128,8 @@ const MIME: Record<string, string> = {
   '.avi': 'video/x-msvideo',
   '.mov': 'video/quicktime',
   '.ts': 'video/mp2t',
+  '.m3u8': 'application/vnd.apple.mpegurl',
+  '.m4s': 'video/iso.segment',
   '.srt': 'application/x-subrip; charset=utf-8',
   '.vtt': 'text/vtt; charset=utf-8'
 };
@@ -175,6 +178,35 @@ function compressedFile(file: string, stat: fs.Stats, encoding: Encoding): Promi
   return entry;
 }
 
+/** Sends a file with byte-range support, as video players need for seeking. */
+export function sendFile(ctx: Context, filePath: string, extraHeaders: Record<string, string> = {}): void {
+  let stat: fs.Stats;
+  try { stat = fs.statSync(filePath); } catch { return ctx.json(404, { error: 'The file is no longer on the server.' }); }
+  const range = parseByteRange(ctx.req.headers.range, stat.size);
+  const headers: Record<string, string> = {
+    'Accept-Ranges': 'bytes',
+    'Content-Type': mimeType(filePath),
+    'Cache-Control': 'private, no-store',
+    'Last-Modified': stat.mtime.toUTCString(),
+    ...extraHeaders
+  };
+  if (range.kind === 'invalid') {
+    ctx.res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}` });
+    ctx.res.end();
+    return;
+  }
+  const { start, end, length } = range.kind === 'valid' ? range.range : { start: 0, end: stat.size - 1, length: stat.size };
+  ctx.res.writeHead(range.kind === 'valid' ? 206 : 200, {
+    ...headers,
+    'Content-Length': String(length),
+    ...(range.kind === 'valid' ? { 'Content-Range': `bytes ${start}-${end}/${stat.size}` } : {})
+  });
+  if (ctx.req.method === 'HEAD' || stat.size === 0) { ctx.res.end(); return; }
+  const stream = fs.createReadStream(filePath, { start, end, highWaterMark: 1024 * 1024 });
+  ctx.res.on('close', () => stream.destroy());
+  stream.pipe(ctx.res);
+}
+
 /** Serves the built dashboard, falling back to index.html for client-side routes. */
 export function serveStatic(webDir: string, ctx: Context): boolean {
   const { req, res, url } = ctx;
@@ -202,7 +234,8 @@ export function serveStatic(webDir: string, ctx: Context): boolean {
   };
   // Posters and backdrops come from catalog CDNs; everything else is served from here.
   if (file.endsWith('.html')) {
-    headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; script-src 'self'; frame-ancestors 'self'; base-uri 'self'";
+    // Video: the player builds a blob: source (hls.js) and fetches TorBox's segments from its CDN directly.
+    headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://*.tb-cdn.io; media-src 'self' blob: https://*.tb-cdn.io; worker-src 'self' blob:; script-src 'self'; frame-ancestors 'self'; base-uri 'self'";
   }
   const encoding = pickEncoding(req, headers['Content-Type']!, stat.size);
   if (!encoding) {

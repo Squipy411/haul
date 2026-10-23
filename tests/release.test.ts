@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEpisodeFile, parseRelease, parseSeasonsAndEpisodes, parseTitleYear } from '../server/release';
+import { isForeignOnly, parseEpisodeFile, parseRelease, parseSeasonsAndEpisodes, parseTitleYear } from '../server/release';
 
 describe('parseRelease', () => {
   it('reads quality, HDR, codec and audio', () => {
@@ -20,6 +20,12 @@ describe('parseRelease', () => {
   it('flags cam rips but not DTS audio', () => {
     expect(parseRelease('Movie 2025 HDCAM x264').lowQuality).toBe(true);
     expect(parseRelease('Movie 2025 1080p WEB-DL DTS x264').lowQuality).toBe(false);
+  });
+
+  it('treats a dub with an English track as watchable', () => {
+    expect(isForeignOnly(parseRelease('Breaking Bad COMPLETE S01-S05 2160p WEB-DL Rus Ukr Eng DTS-HD MA5.1'))).toBe(false);
+    expect(isForeignOnly(parseRelease('Во все тяжкие / Breaking Bad [S01-05] (2008-2013) BDRemux 1080p'))).toBe(true);
+    expect(isForeignOnly(parseRelease('Breaking.Bad.S01.1080p.BluRay.x264'))).toBe(false);
   });
 
   it('keeps a telesync a telesync even when it claims to be WEB-DL', () => {

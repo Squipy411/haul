@@ -1,10 +1,11 @@
+import { Play } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Episode, Follow, Job, MediaType, Meta, Release, SeasonPlan } from '../../../shared/types';
 import { api } from '../api';
 import { FollowControl } from '../components/Follow';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
 import { Empty, ErrorNote, Loading, Menu, Picker, Sheet, TabBar, Tick, Toggle, join } from '../components/ui';
-import { airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
+import { Link, airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
 import { diskFor, useCrumb, useStatus } from '../shell';
 
 const aired = (episode: Episode) => !episode.released || Date.parse(episode.released) <= Date.now() + 12 * 3600_000;
@@ -256,6 +257,8 @@ function EpisodeRow({ meta, episode, incoming, selected, onToggle, open, onOpen 
   const download = useDownloader(meta);
   const isAired = aired(episode);
   const releases = useAsync(() => (open ? api.episodeReleases(meta.id, episode.season, episode.episode) : Promise.resolve(null)), [open]);
+  const { navigate } = useRouter();
+  const watch = `/watch/series/${meta.id}?s=${episode.season}&e=${episode.episode}`;
   const status = episode.owned ? <span className="pill positive">In library</span>
     : incoming !== undefined ? <span className="pill transfer num">Downloading {Math.round(incoming * 100)}%</span>
       : !isAired ? <span className="pill">Out {airDate(episode.released)}</span>
@@ -264,7 +267,9 @@ function EpisodeRow({ meta, episode, incoming, selected, onToggle, open, onOpen 
     <div className={`trow tall ${open ? 'open' : ''}`} id={`episode-${episode.episode}`}>
       <Tick checked={selected} onChange={onToggle} disabled={!isAired || episode.owned} label={`Select episode ${episode.episode}`} />
       <div className="ident">
-        <div className="thumb">{episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />}</div>
+        {isAired
+          ? <Link to={watch} className="thumb playable" aria-label={`${episode.owned ? 'Play' : 'Stream'} episode ${episode.episode}`}>{episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />}<span className="play-badge"><Play size={16} fill="currentColor" /></span></Link>
+          : <div className="thumb">{episode.thumbnail && <img src={episode.thumbnail} alt="" loading="lazy" onError={(event) => { (event.target as HTMLImageElement).style.display = 'none'; }} />}</div>}
         <div style={{ minWidth: 0 }}>
           <div className="t1 truncate"><span className="faint num">{episode.episode}</span>&nbsp;&nbsp;{episode.title}</div>
           <div className="t2">{airDate(episode.released)}</div>
@@ -272,7 +277,12 @@ function EpisodeRow({ meta, episode, incoming, selected, onToggle, open, onOpen 
         </div>
       </div>
       <span className="status">{status}</span>
-      {isAired ? <button className="btn sm" style={{ justifySelf: 'end' }} onClick={onOpen}>{open ? 'Hide' : 'Versions'}</button> : <span />}
+      {isAired ? (
+        <div className="row episode-actions">
+          <Link to={watch} className="btn sm icon" aria-label={`${episode.owned ? 'Play' : 'Stream'} episode ${episode.episode}`} title={episode.owned ? 'Play your file' : 'Stream from TorBox'}><Play size={14} fill="currentColor" /></Link>
+          <button className="btn sm" onClick={onOpen}>{open ? 'Hide' : 'Versions'}</button>
+        </div>
+      ) : <span />}
       {open && (
         <div className="expand">
           {releases.loading && <Loading text={`Looking for episode ${episode.episode}…`} />}
@@ -283,6 +293,7 @@ function EpisodeRow({ meta, episode, incoming, selected, onToggle, open, onOpen 
               season={episode.season}
               releases={releases.data.releases}
               emptyText="No torrents for this episode yet."
+              onStream={(release) => navigate(`${watch}&hash=${release.hash}`)}
               onDownload={(release) => download([{ release, season: episode.season, episodes: [episode.episode] }], `${meta.name} ${seasonName(episode.season)}, episode ${episode.episode}`)}
             />
           )}
@@ -365,7 +376,7 @@ function SeriesView({ meta }: { meta: Meta }) {
           </div>
           <div className="row">
             {seasonsMissing.length > 1 && <button className="btn" onClick={() => setEverything(true)}>Get all {seasonsMissing.length} seasons</button>}
-            <button className="btn primary" onClick={() => setPlan({})} disabled={!missing.length}>
+            <button className="btn" onClick={() => setPlan({})} disabled={!missing.length}>
               {missing.length ? `Download ${seasonName(season).toLowerCase()}` : 'Season complete'}
             </button>
           </div>
@@ -445,14 +456,33 @@ function SeriesView({ meta }: { meta: Meta }) {
 /** Follow a show or movie: Haul tells your phone when a torrent is out, and can download it right away. */
 function MovieView({ meta }: { meta: Meta }) {
   const download = useDownloader(meta);
+  const { navigate } = useRouter();
   const releases = useAsync(() => api.movieReleases(meta.id), [meta.id]);
   return (
     <section style={{ marginTop: 26 }} id="versions">
       <div className="section-title" style={{ marginTop: 0 }}><h2>Versions</h2>{releases.data && <span className="faint num">{releases.data.releases.length} found</span>}</div>
       {releases.loading && <Loading text="Searching torrents and checking TorBox…" />}
       {releases.error && <ErrorNote message={releases.error} onRetry={releases.reload} />}
-      {releases.data && <ReleaseTable releases={releases.data.releases} onDownload={(release) => download([{ release }], meta.name)} />}
+      {releases.data && <ReleaseTable releases={releases.data.releases} onStream={(release) => navigate(`/watch/movie/${meta.id}?hash=${release.hash}`)} onDownload={(release) => download([{ release }], meta.name)} />}
     </section>
+  );
+}
+
+/** Play, Resume, or Play S01E01: your file when you have it, otherwise streamed from TorBox. */
+function PlayButton({ meta }: { meta: Meta }) {
+  const { data } = useAsync(() => api.continueWatching().catch(() => ({ items: [] })), [meta.id]);
+  const entry = data?.items.find((item) => item.imdbId === meta.id && item.type === meta.type);
+  const first = meta.episodes.filter((episode) => episode.season > 0 && aired(episode)).sort((a, b) => a.season - b.season || a.episode - b.episode)[0];
+  const target = meta.type === 'series' ? (entry ? { season: entry.season!, episode: entry.episode! } : first) : undefined;
+  if (meta.type === 'series' && !target) return null;
+  const code = target ? `S${String(target.season).padStart(2, '0')}E${String(target.episode).padStart(2, '0')}` : ''; // taste-skill-ignore: episode code
+  const left = entry && !entry.upNext && entry.duration ? Math.max(1, Math.round((entry.duration - entry.position) / 60)) : 0;
+  const label = entry && !entry.upNext ? `Resume${code ? ` ${code}` : ''}` : `Play${code ? ` ${code}` : ''}`;
+  const to = meta.type === 'series' ? `/watch/series/${meta.id}?s=${target!.season}&e=${target!.episode}` : `/watch/movie/${meta.id}`;
+  return (
+    <Link to={to} className="btn primary" title={left ? `${left} min left` : undefined}>
+      <Play size={15} fill="currentColor" />{label}
+    </Link>
   );
 }
 
@@ -473,7 +503,8 @@ export function TitlePage({ type, id }: { type: MediaType; id: string }) {
           {meta.description && <p className="clamp-2">{meta.description}</p>}
           {meta.cast?.length ? <div className="faint" style={{ fontSize: 13 }}>{meta.cast.slice(0, 4).join(', ')}</div> : null}
           <div className="actions">
-            {meta.type === 'movie' && <button className="btn primary" onClick={() => document.getElementById('versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{meta.ownedMovie ? 'Get another version' : 'Choose a version'}</button>}
+            <PlayButton meta={meta} />
+            {meta.type === 'movie' && <button className="btn" onClick={() => document.getElementById('versions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{meta.ownedMovie ? 'Get another version' : 'Download'}</button>}
             <FollowControl target={{ type: meta.type, imdbId: meta.id, title: meta.name }} initial={meta.follow ?? null} />
             {meta.ownedMovie && <span className="pill positive" style={{ alignSelf: 'center' }}>In your library</span>}
           </div>

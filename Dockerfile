@@ -11,7 +11,8 @@ LABEL org.opencontainers.image.title="Haul" \
       org.opencontainers.image.description="Self-hosted TorBox downloader for films and series, with a Nuvio/Stremio library addon" \
       org.opencontainers.image.source="https://github.com/Squipy411/haul" \
       org.opencontainers.image.licenses="MIT"
-RUN apk add --no-cache su-exec
+# ffmpeg lets the player convert files a browser can't play (x265, DTS, TrueHD, MKV on Safari).
+RUN apk add --no-cache su-exec ffmpeg
 ENV NODE_ENV=production \
     PORT=60700 \
     DATA_DIR=/data \

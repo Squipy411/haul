@@ -18,7 +18,8 @@ const pages = {
   settings: () => import('./pages/Settings'),
   setup: () => import('./pages/Setup'),
   title: () => import('./pages/Title'),
-  upcoming: () => import('./pages/Upcoming')
+  upcoming: () => import('./pages/Upcoming'),
+  watch: () => import('./pages/Watch')
 };
 const Browse = lazy(() => pages.browse().then((module) => ({ default: module.Browse })));
 const Downloads = lazy(() => pages.downloads().then((module) => ({ default: module.Downloads })));
@@ -28,9 +29,10 @@ const SettingsPage = lazy(() => pages.settings().then((module) => ({ default: mo
 const Setup = lazy(() => pages.setup().then((module) => ({ default: module.Setup })));
 const TitlePage = lazy(() => pages.title().then((module) => ({ default: module.TitlePage })));
 const Upcoming = lazy(() => pages.upcoming().then((module) => ({ default: module.Upcoming })));
+const Watch = lazy(() => pages.watch().then((module) => ({ default: module.Watch })));
 
 function prefetchPages(): void {
-  const load = () => { for (const page of [pages.title, pages.downloads, pages.upcoming, pages.library, pages.settings, pages.browse]) void page().catch(() => undefined); };
+  const load = () => { for (const page of [pages.title, pages.watch, pages.downloads, pages.upcoming, pages.library, pages.settings, pages.browse]) void page().catch(() => undefined); };
   if ('requestIdleCallback' in window) window.requestIdleCallback(load, { timeout: 4000 });
   else setTimeout(load, 1500);
 }
@@ -244,5 +246,8 @@ export function App() {
   if (!status.authenticated) return <Suspense fallback={<Loading />}><Login onDone={refresh} desktop={status.desktop} passwordSet={status.passwordSet} /></Suspense>;
   if (!status.setupComplete) return <Suspense fallback={<Loading />}><Setup createPassword={false} onDone={refresh} /></Suspense>;
 
+  // The player takes the whole screen, without the sidebar.
+  const watch = /^\/watch\/(movie|series)\/(tt\d+)$/.exec(path);
+  if (watch) return <Suspense fallback={<div className="player waiting" />}><Watch key={path} type={watch[1] as 'movie' | 'series'} id={watch[2]!} /></Suspense>;
   return <Shell status={status}><Suspense fallback={<Loading />}><Page path={path} /></Suspense></Shell>;
 }

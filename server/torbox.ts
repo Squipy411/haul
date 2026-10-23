@@ -48,6 +48,19 @@ interface Envelope<T> {
   data: T;
 }
 
+export interface TorboxStream {
+  hls_url: string;
+  needs_transcoding?: boolean;
+  audio_index?: number;
+  subtitle_index?: number | string | null;
+  intro_information?: { start_time?: number; end_time?: number } | null;
+  metadata?: {
+    video?: { codec?: string; width?: number; height?: number; duration?: string };
+    audios?: Array<{ index: number; codec?: string; language?: string; language_full?: string; title?: string | null; channels?: number }>;
+    subtitles?: Array<{ index: number; codec?: string; language?: string; language_full?: string; title?: string | null }>;
+  };
+}
+
 const PLANS: Record<number, string> = { 0: 'Free', 1: 'Essential', 2: 'Pro', 3: 'Standard' };
 
 export class Torbox {
@@ -146,6 +159,23 @@ export class Torbox {
     });
     if (typeof url !== 'string' || !/^https?:\/\//.test(url)) throw new TorboxError('TorBox did not return a download link.', 'NO_LINK');
     return url;
+  }
+
+  /**
+   * A browser-ready HLS stream of one file. TorBox converts it on its servers and burns in the chosen
+   * subtitle. The returned hls_url carries the API key, so it must never reach the browser.
+   */
+  async createStream(torrentId: number, fileId: number, choice: { audio?: number; subtitle?: number | null } = {}): Promise<TorboxStream> {
+    return this.call<TorboxStream>('/stream/createstream', {
+      query: {
+        id: torrentId,
+        file_id: fileId,
+        type: 'torrent',
+        chosen_audio_index: choice.audio ?? 0,
+        ...(choice.subtitle !== undefined && choice.subtitle !== null ? { chosen_subtitle_index: choice.subtitle } : {}),
+        scrobbling_enabled: false
+      }
+    });
   }
 
   async remove(torrentId: number): Promise<void> {

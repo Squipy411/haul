@@ -4,9 +4,8 @@ import path from 'node:path';
 import type { LibraryFile, LibraryItem, MediaType } from '../shared/types.js';
 import { rawMeta } from './catalog.js';
 import { VERSION } from './config.js';
-import { type Context, type Router, mimeType } from './http.js';
+import { type Context, type Router, mimeType, sendFile } from './http.js';
 import type { Library } from './library.js';
-import { parseByteRange } from './range.js';
 import { formatBytes } from './release.js';
 import type { SettingsService } from './settings.js';
 
@@ -209,30 +208,7 @@ export function registerAddon(router: Router, deps: { settings: SettingsService;
     cors(ctx);
     const found = verifyStream(ctx);
     if (!found) return ctx.json(401, { error: 'This stream link has expired. Reopen the title in Nuvio.' });
-    const filePath = found.file.path;
-    let stat: fs.Stats;
-    try { stat = fs.statSync(filePath); } catch { return ctx.json(404, { error: 'The file is no longer on the server.' }); }
-    const range = parseByteRange(ctx.req.headers.range, stat.size);
-    const headers: Record<string, string> = {
-      'Accept-Ranges': 'bytes',
-      'Content-Type': mimeType(filePath),
-      'Cache-Control': 'private, no-store',
-      'Last-Modified': stat.mtime.toUTCString()
-    };
-    if (range.kind === 'invalid') {
-      ctx.res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}` });
-      return ctx.res.end();
-    }
-    const { start, end, length } = range.kind === 'valid' ? range.range : { start: 0, end: stat.size - 1, length: stat.size };
-    ctx.res.writeHead(range.kind === 'valid' ? 206 : 200, {
-      ...headers,
-      'Content-Length': String(length),
-      ...(range.kind === 'valid' ? { 'Content-Range': `bytes ${start}-${end}/${stat.size}` } : {})
-    });
-    if (ctx.req.method === 'HEAD' || stat.size === 0) return ctx.res.end();
-    const stream = fs.createReadStream(filePath, { start, end, highWaterMark: 1024 * 1024 });
-    ctx.res.on('close', () => stream.destroy());
-    stream.pipe(ctx.res);
+    sendFile(ctx, found.file.path);
   });
 
   router.get('/stream-sub/:fileId/:index/:expires/:signature/:name', (ctx) => {
@@ -254,10 +230,9 @@ export function registerAddon(router: Router, deps: { settings: SettingsService;
     const title = escapeXml(item?.title ?? 'Unknown title');
     const year = item?.year ? String(item.year) : '';
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">
-<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1d2030"/><stop offset="1" stop-color="#0b0c12"/></linearGradient></defs>
-<rect width="400" height="600" fill="url(#g)"/><rect x="24" y="24" width="352" height="552" rx="18" fill="none" stroke="#6d7cff" stroke-opacity=".35"/>
-<text x="200" y="300" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="30" font-weight="700" fill="#eef0f7">${title.length > 22 ? `${title.slice(0, 21)}…` : title}</text>
-<text x="200" y="340" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="20" fill="#8f95ad">${year}</text></svg>`;
+<rect width="400" height="600" fill="#111111"/>
+<text x="200" y="300" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="30" font-weight="600" fill="#ffffff">${title.length > 22 ? `${title.slice(0, 21)}…` : title}</text>
+<text x="200" y="340" text-anchor="middle" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="20" fill="#949494">${year}</text></svg>`;
     ctx.res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
     ctx.res.end(svg);
   });

@@ -1,4 +1,5 @@
-import type { Job } from '../../../shared/types';
+import { Play, X } from 'lucide-react';
+import type { Job, WatchProgress } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
 import { Link, airDate, bytes, duration, episodeRange, pad, speed, useAsync, usePolling } from '../lib';
@@ -84,6 +85,46 @@ function NewEpisodes() {
   );
 }
 
+const code = (item: WatchProgress) => (item.type === 'series' ? `S${pad(item.season!)}E${pad(item.episode!)}` : '');
+
+/** Where you stopped, and the next episode of shows you're partway through. Hidden when empty. */
+function ContinueWatching() {
+  const { data, setData } = useAsync(() => api.continueWatching(), []);
+  const items = data?.items ?? [];
+  if (!items.length) return null;
+  const forget = async (item: WatchProgress) => {
+    setData({ items: items.filter((entry) => entry.key !== item.key) });
+    await api.forgetProgress(item.key).catch(() => undefined);
+  };
+  return (
+    <section className="watch-section">
+      <div className="section-title"><h2>Continue watching</h2></div>
+      <div className="shelf watch-shelf">
+        {items.map((item) => {
+          const to = `/watch/${item.type}/${item.imdbId}${item.type === 'series' ? `?s=${item.season}&e=${item.episode}` : ''}`;
+          const left = item.duration ? Math.max(1, Math.round((item.duration - item.position) / 60)) : 0;
+          return (
+            <div key={item.key} className="watch-card">
+              <Link to={to} className="still" aria-label={`${item.upNext ? 'Play' : 'Resume'} ${item.title} ${code(item)}`}>
+                {(item.background || item.poster) && <img src={item.background || item.poster} alt="" loading="lazy" />}
+                <span className="play-badge"><Play size={18} fill="currentColor" /></span>
+                {!item.upNext && <i className="watched" aria-hidden="true"><b style={{ width: `${Math.min(100, (item.position / item.duration) * 100)}%` }} /></i>}
+              </Link>
+              <div className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
+                <Link to={to} style={{ minWidth: 0, flex: 1 }}>
+                  <div className="name truncate">{item.title}</div>
+                  <div className="meta truncate">{item.upNext ? `Up next · ${join([code(item), item.episodeTitle])}` : join([code(item), `${left} min left`])}</div>
+                </Link>
+                <button className="btn ghost sm icon" onClick={() => void forget(item)} aria-label={`Remove ${item.title} from Continue watching`}><X size={14} /></button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function when(released: string): string {
   const at = new Date(released);
   const days = Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - new Date(new Date().setHours(0, 0, 0, 0)).getTime()) / 86_400_000);
@@ -145,6 +186,7 @@ export function Discover() {
         </div>
         <button className="btn primary" onClick={openSearch}>Find a title</button>
       </div>
+      <ContinueWatching />
       <div className="home-top">
         <Transfers jobs={downloads.data?.jobs ?? []} />
         <ComingUp />

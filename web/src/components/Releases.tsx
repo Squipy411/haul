@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react';
+import { Check, Play } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Release, ReleaseInfo } from '../../../shared/types';
 import { bytes, episodeRange } from '../lib';
@@ -64,15 +64,20 @@ function savedSort(): Sort {
   return 'size';
 }
 
+/** Dub-only and camera copies go after the rest whichever sort is chosen: biggest first means biggest of the good ones. */
+const sideline = ({ info }: Release) => (info.lowQuality || (info.languages.length > 0 && !info.languages.some((language) => language === 'MULTI' || language === 'DUAL' || language === 'EN')) ? 1 : 0);
+
 /** Size of what would actually be downloaded: one episode, one film, or the season's part of a pack. */
 function bytesOf(release: Release): number {
   const isPack = release.kind === 'season' || release.kind === 'multi-season';
   return (isPack ? release.totalSize ?? (release.fileSize ? release.fileSize * Math.max(1, release.packEpisodes?.length ?? 1) : 0) : release.fileSize ?? release.totalSize) ?? 0;
 }
 
-export function ReleaseTable({ releases, onDownload, season, emptyText, compact }: {
+export function ReleaseTable({ releases, onDownload, onStream, season, emptyText, compact }: {
   releases: Release[];
   onDownload: (release: Release) => Promise<boolean>;
+  /** Watch a version now, streamed from TorBox. Only versions TorBox already has can start at once. */
+  onStream?: (release: Release) => void;
   season?: number;
   emptyText?: string;
   compact?: boolean;
@@ -95,9 +100,9 @@ export function ReleaseTable({ releases, onDownload, season, emptyText, compact 
   const visible = releases
     .filter((release) => (filter === 'all' || release.info.resolution === filter) && (!readyOnly || release.cached))
     .slice()
-    .sort((a, b) => sort === 'size' ? bytesOf(b) - bytesOf(a) || b.score - a.score
+    .sort((a, b) => sideline(a) - sideline(b) || (sort === 'size' ? bytesOf(b) - bytesOf(a) || b.score - a.score
       : sort === 'seeders' ? (b.seeders ?? 0) - (a.seeders ?? 0) || b.score - a.score
-        : b.score - a.score);
+        : b.score - a.score));
 
   const start = async (release: Release) => {
     setBusy(release.hash);
@@ -151,10 +156,17 @@ export function ReleaseTable({ releases, onDownload, season, emptyText, compact 
               <span className="r num hide-sm">{sizeOf(release)}</span>
               <span className="r num muted hide-sm">{release.seeders ?? '–'}</span>
               <span className="hide-sm"><Availability cached={release.cached} /></span>
-              <button className={`btn sm ${best && !isQueued ? 'primary' : ''}`} style={{ justifySelf: 'end' }} disabled={busy === release.hash || isQueued} onClick={() => start(release)}>
-                {busy === release.hash ? <span className="spinner" /> : isQueued ? <Check size={14} /> : null}
-                {isQueued ? 'Added' : 'Download'}
-              </button>
+              <div className="row release-actions">
+                {onStream && release.cached && (
+                  <Tip text="Watch now, streamed from TorBox">
+                    <button className="btn sm icon" onClick={() => onStream(release)} aria-label={`Stream ${release.name}`}><Play size={14} fill="currentColor" /></button>
+                  </Tip>
+                )}
+                <button className={`btn sm ${best && !isQueued ? 'primary' : ''}`} disabled={busy === release.hash || isQueued} onClick={() => start(release)}>
+                  {busy === release.hash ? <span className="spinner" /> : isQueued ? <Check size={14} /> : null}
+                  {isQueued ? 'Added' : 'Download'}
+                </button>
+              </div>
             </div>
           );
         })}

@@ -12,6 +12,7 @@ You need a TorBox account and either Docker or a Windows PC.
 
 ## What you can do
 
+- **Watch in your browser.** Press play on any film or episode: Haul plays your own file, or streams the best version TorBox already has without downloading it first. Resume where you stopped, Continue watching on Home, Skip intro, next episode, subtitles and audio tracks.
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
 - **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
 - **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. Largest files are listed first (switch to best match or most seeders if you like). From a multi-season pack, only the season you asked for is downloaded.
@@ -100,6 +101,17 @@ Haul shows **UPDATE x.y.z** in the top bar when a new release is out, and the Wi
 
 Settings, the queue and the library index live in `/data` (Docker) or `%APPDATA%\Haul` (Windows) and survive updates.
 
+## Watching
+
+Every film and episode has a play button. Haul picks the source:
+
+- **Your file**, if it's in your library. MP4 and WebM play as they are. MKV, x265/HEVC, 10-bit, DTS and TrueHD files are rewrapped or converted on the fly by ffmpeg (included in the Docker image; on Windows, install ffmpeg to get this). 4K that the browser can't play is converted to 1080p.
+- **Streamed from TorBox** otherwise: the best version marked Ready now, or the exact version you pick with ▶ in a version list. TorBox converts it on its servers, so every format plays, and burns in the subtitle you choose. Streaming needs a **TorBox Pro** plan. Streaming a version adds it to your TorBox list, as downloading does.
+
+Your TorBox API key never reaches the browser: Haul fetches TorBox's playlists itself and hands the player links that only open that one stream.
+
+Keys: Space or K play/pause, ← → (or J L) 10 seconds, ↑ ↓ volume, M mute, F full screen, N next episode.
+
 ## Phone notifications
 
 Haul sends notifications through [ntfy](https://ntfy.sh), a free push service with apps for iPhone and Android. You don't need an account.
@@ -159,6 +171,7 @@ The server is one bundled file with no runtime dependencies (Node 22+). State li
 | `server/jobs.ts` | The queue: TorBox → disk → library |
 | `server/organize.ts` | Picks the right files out of a torrent and names them |
 | `server/library.ts`, `server/addon.ts` | Library scanner and the Nuvio/Stremio addon |
+| `server/play.ts`, `server/media.ts`, `server/progress.ts` | The player: picking a source, TorBox streams, ffmpeg for local files, watch progress |
 | `server/follows.ts`, `server/notify.ts` | Follows, the torrent watcher, the schedule, and ntfy/Discord delivery |
 | `server/auth.ts` | Sign-in, sessions, setup lock |
 | `web/src` | Dashboard (React) |

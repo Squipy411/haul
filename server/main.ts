@@ -8,6 +8,9 @@ import { type ServerOptions, VERSION, optionsFromEnv } from './config.js';
 import { type Context, HttpError, Router, compressSync, parseCookies, pickEncoding, readBody, requestBaseUrl, serveStatic } from './http.js';
 import { JobManager } from './jobs.js';
 import { Library } from './library.js';
+import { MediaTools } from './media.js';
+import { registerPlay } from './play.js';
+import { ProgressStore } from './progress.js';
 import { SearchService } from './search.js';
 import { SettingsService } from './settings.js';
 import { Torbox } from './torbox.js';
@@ -60,6 +63,9 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   router.get('/health', (ctx) => ctx.json(200, { status: 'ok', version: VERSION }));
   registerAddon(router, { settings, library });
   registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier });
+  const media = new MediaTools();
+  const progress = new ProgressStore(options.dataDir);
+  const transcodes = registerPlay(router, { library, catalog, search, torbox, media, progress, apiKey: () => settings.value.torboxApiKey });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://haul.local');
@@ -136,6 +142,8 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       follows.stop();
       jobs.stop();
       library.stop();
+      transcodes.close();
+      progress.flush();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   };

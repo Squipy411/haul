@@ -1,4 +1,4 @@
-import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter } from '../../shared/types';
+import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -75,6 +75,17 @@ export const api = {
 
   addon: () => request<AddonInfo>('GET', '/api/addon'),
   regenerateAddon: () => request<AddonInfo>('POST', '/api/addon/regenerate'),
+  play: (body: { type: MediaType; imdbId: string; season?: number; episode?: number; source?: 'local' | 'torbox'; hash?: string; caps: PlayCaps }) => request<PlaySession>('POST', '/api/play', body),
+  playTracks: (stream: string, choice: { audio?: number; subtitle?: number | null }) => request<{ url: string; audio: number; subtitle: number | null }>('POST', `/api/play/torbox/${stream}/tracks`, choice),
+  playInfo: () => request<{ ffmpeg: boolean; torbox: boolean }>('GET', '/api/play/info'),
+  continueWatching: () => request<{ items: WatchProgress[] }>('GET', '/api/continue'),
+  forgetProgress: (key: string) => request<{ ok: true }>('DELETE', `/api/progress/${encodeURIComponent(key)}`),
+  /** keepalive lets the last position save as the page closes. */
+  saveProgress: (body: Omit<WatchProgress, 'key' | 'updatedAt' | 'upNext'>, keepalive = false) => fetch('/api/progress', {
+    method: 'POST', keepalive, credentials: 'same-origin',
+    headers: { 'X-Haul-Request': '1', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).catch(() => undefined),
   calendar: () => request<{ url: string; webcalUrl: string }>('GET', '/api/calendar'),
   regenerateCalendar: () => request<{ url: string; webcalUrl: string }>('POST', '/api/calendar/regenerate')
 };

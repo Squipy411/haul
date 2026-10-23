@@ -395,3 +395,67 @@ export interface AddonInfo {
   stremioUrl: string;
   baseUrlSource: 'setting' | 'request';
 }
+
+// ---------- Watching ----------
+
+export interface PlayTrack { index: number; label: string }
+
+/** A subtitle choice. With `url`, the player overlays a WebVTT file; without, the stream is rebuilt with it burned in (TorBox). */
+export interface PlaySubtitle { id: string; label: string; url?: string }
+
+/** What the browser can decode, so the server only converts what it must. */
+export interface PlayCaps { hevc: boolean; av1: boolean; ac3: boolean }
+
+export interface PlaySession {
+  /** local: a file on this server. torbox: streamed from TorBox, which converts it for the browser. */
+  kind: 'local' | 'torbox';
+  /** Progress key: "movie:tt…" or "series:tt…:S:E". */
+  key: string;
+  type: MediaType;
+  imdbId: string;
+  season?: number;
+  episode?: number;
+  title: string;
+  /** "S01E04 · Cancer Man" */
+  subtitle?: string;
+  poster?: string;
+  background?: string;
+  /** Where the video comes from. For mode "stream", add ?start= (seconds) to begin elsewhere. */
+  url: string;
+  /** direct: the file as is. stream: ffmpeg on this server. hls: a playlist. */
+  mode: 'direct' | 'stream' | 'hls';
+  /** Converting the picture as well as the wrapper; shown so slow starts make sense. */
+  converting?: boolean;
+  duration?: number;
+  /** Where to pick up from, in seconds. */
+  resume?: number;
+  audios: PlayTrack[];
+  audio: number;
+  subtitles: PlaySubtitle[];
+  /** Burned-in subtitle (TorBox), if one is chosen. */
+  subtitle_id?: string;
+  /** TorBox's guess at where the opening titles end. */
+  intro?: { start: number; end: number };
+  next?: { season: number; episode: number; title: string };
+  /** The release or file being played. */
+  source?: string;
+  /** TorBox stream id, for switching tracks. */
+  stream?: string;
+}
+
+export interface WatchProgress {
+  key: string;
+  type: MediaType;
+  imdbId: string;
+  season?: number;
+  episode?: number;
+  title: string;
+  episodeTitle?: string;
+  poster?: string;
+  background?: string;
+  position: number;
+  duration: number;
+  updatedAt: number;
+  /** Shown as "Up next": the episode after one you finished. */
+  upNext?: boolean;
+}

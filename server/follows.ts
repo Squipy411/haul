@@ -6,7 +6,7 @@ import type { ServerOptions } from './config.js';
 import type { JobManager } from './jobs.js';
 import type { Library } from './library.js';
 import type { Notifier } from './notify.js';
-import { parseTitleYear, resolutionRank } from './release.js';
+import { isForeignOnly, parseTitleYear, resolutionRank } from './release.js';
 import type { SearchService } from './search.js';
 import type { SettingsService } from './settings.js';
 import { JsonFile } from './store.js';
@@ -182,7 +182,7 @@ export class FollowService {
       const want = follow.want;
       return releases.filter(({ info }) => matchesFilter(info, want) && !info.lowQuality && !info.threeD
         && (quality.allowUpscaled || !info.upscaled)
-        && !(info.languages.length && !info.languages.some((language) => language === 'MULTI' || language === 'DUAL')));
+        && !isForeignOnly(info));
     }
     return releases.filter((release) => release.score > 0 && !release.info.lowQuality
       && (follow.type === 'series' || resolutionRank(release.info.resolution) >= resolutionRank('720p')));

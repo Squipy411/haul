@@ -137,11 +137,13 @@ export function SettingsPage() {
   const [notifying, setNotifying] = useState(false);
   const [folders, setFolders] = useState<Array<{ dir: string; ok: boolean; error?: string }> | null>(null);
   const [addon, setAddon] = useState<AddonInfo | null>(null);
+  const [player, setPlayer] = useState<{ ffmpeg: boolean } | null>(null);
 
   useEffect(() => { if (data) setDraft(data); }, [data]);
   useEffect(() => {
     api.testTorbox().then(setAccount, () => undefined);
     api.addon().then(setAddon, () => undefined);
+    api.playInfo().then(setPlayer, () => undefined);
   }, []);
   useEffect(() => {
     const refresh = () => { api.settings().then(setData, () => undefined); };
@@ -322,6 +324,21 @@ export function SettingsPage() {
           <div className="divider" />
           <SwitchRow title="When a download finishes" checked={draft.notifications.downloadFinished} onChange={(downloadFinished) => setNotify({ downloadFinished })} />
           <SwitchRow title="When a download fails" checked={draft.notifications.downloadFailed} onChange={(downloadFailed) => setNotify({ downloadFailed })} />
+        </Section>
+
+        <Section title="Watching" description="Press play on any title or episode. Haul plays your own file when it has one, and otherwise streams the best version TorBox already has.">
+          <div className="switch-row">
+            <b>Streaming from TorBox</b>
+            <span className={`pill ${account?.ok && /pro/i.test(account.plan ?? '') ? 'positive' : ''}`}>{account?.ok ? `${account.plan} plan` : 'Not connected'}</span>
+            <small>TorBox converts every format for the browser on its servers. Its streaming needs a Pro plan.</small>
+          </div>
+          <div className="switch-row">
+            <b>Your own files</b>
+            <span className={`pill ${player?.ffmpeg ? 'positive' : 'warning'}`}>{player ? (player.ffmpeg ? 'Every format' : 'MP4 and WebM only') : 'Checking…'}</span>
+            <small>{player?.ffmpeg
+              ? 'ffmpeg is installed, so MKV, x265, DTS and TrueHD files are converted on the fly. 4K is converted to 1080p when the browser can’t play it.'
+              : 'Install ffmpeg on this machine to play MKV, x265 and Dolby/DTS audio in the browser. The Docker image includes it.'}</small>
+          </div>
         </Section>
 
         <Section title="Nuvio and Stremio" description="Your library as an addon. Anyone with the address can play your files, so keep it private.">
