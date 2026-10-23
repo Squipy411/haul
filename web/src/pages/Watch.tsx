@@ -101,6 +101,7 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
   const [session, setSession] = useState<PlaySession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [slowStart, setSlowStart] = useState(false);
   // The title's artwork shows while the stream gets ready, instead of a black screen.
   const meta = useAsync(() => api.meta(type, id).catch(() => null), [type, id]);
   const still = type === 'series' ? meta.data?.episodes.find((entry) => entry.season === season && entry.episode === episode)?.thumbnail ?? meta.data?.background : meta.data?.background;
@@ -112,9 +113,12 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
     let alive = true;
     setSession(null);
     setError(null);
+    setSlowStart(false);
+    const slow = window.setTimeout(() => setSlowStart(true), 6000);
     api.play({ type, imdbId: id, season, episode, source, hash, caps: detectCaps() })
-      .then((value) => { if (alive) setSession(value); }, (failure: Error) => { if (alive) setError(failure.message); });
-    return () => { alive = false; };
+      .then((value) => { if (alive) setSession(value); }, (failure: Error) => { if (alive) setError(failure.message); })
+      .finally(() => window.clearTimeout(slow));
+    return () => { alive = false; window.clearTimeout(slow); };
   }, [type, id, season, episode, source, hash, attempt]);
 
   if (error || !session) {
@@ -145,6 +149,7 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
             <>
               <span className="spinner large" />
               <p>{source === 'torbox' || hash ? 'Asking TorBox for the stream…' : 'Getting it ready…'}</p>
+              {slowStart && <p className="faint" style={{ maxWidth: '44ch' }}>Finding a version TorBox has ready and adding it to your list. The first time can take up to 20 seconds; after that it starts in a second or two.</p>}
             </>
           )}
         </div>
@@ -602,8 +607,9 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           <h1>Playback stopped</h1>
           <p>{failure}</p>
           <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button className="btn primary" onClick={retry}>Try again</button>
-            {onFailedLocal && <button className="btn" onClick={onFailedLocal}>Stream from TorBox instead</button>}
+            {/* Trying the same file again won't change its format, so TorBox comes first when it can help. */}
+            {onFailedLocal && <button className="btn primary" onClick={onFailedLocal}>Stream from TorBox instead</button>}
+            <button className={`btn ${onFailedLocal ? '' : 'primary'}`} onClick={retry}>Try again</button>
           </div>
         </div>
       )}
