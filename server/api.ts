@@ -13,6 +13,8 @@ import type { SearchService } from './search.js';
 import type { SettingsService } from './settings.js';
 import type { Torbox } from './torbox.js';
 import { cleanFilter, type FollowService } from './follows.js';
+import { scheduleCalendar } from './calendar.js';
+import { DiskMonitor } from './disk.js';
 import type { Notifier } from './notify.js';
 import type { UpdateChecker } from './updates.js';
 
@@ -66,8 +68,10 @@ export function registerApi(router: Router, deps: Deps): void {
     return { ...meta, inLibrary: owned, ownedMovie: owned };
   };
 
-  const status = (ctx: Context): Status => {
+  const disks = new DiskMonitor();
+  const status = async (ctx: Context): Promise<Status> => {
     const authenticated = auth.isAuthenticated(ctx);
+    const value = settings.value;
     // Remember the address people use, so a tapped notification opens the same place.
     if (authenticated) notifier.baseUrl = ctx.baseUrl;
     return {
@@ -83,11 +87,12 @@ export function registerApi(router: Router, deps: Deps): void {
       transferSpeed: authenticated ? jobs.jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0) : 0,
       libraryCounts: authenticated ? library.counts() : { movies: 0, series: 0, episodes: 0 },
       desktop: options.desktop,
-      update: authenticated ? updates.available : null
+      update: authenticated ? updates.available : null,
+      disks: authenticated ? await disks.read([{ label: 'Movies', dir: value.moviesDir }, { label: 'Shows', dir: value.tvDir }, { label: 'Downloads in progress', dir: value.incompleteDir }]) : []
     };
   };
 
-  router.get('/api/status', (ctx) => ctx.json(200, status(ctx), { 'Cache-Control': 'no-store' }));
+  router.get('/api/status', async (ctx) => ctx.json(200, await status(ctx), { 'Cache-Control': 'no-store' }));
 
   router.post('/api/login', async (ctx) => {
     const ip = clientIp(ctx);
@@ -297,8 +302,11 @@ export function registerApi(router: Router, deps: Deps): void {
       : inSeason;
     const skipped: number[] = [];
     const wanted: number[] = [];
+    // Episodes already in the queue would otherwise be downloaded twice.
+    const active = jobs.jobs.filter((job) => job.imdbId === id && job.season === season && ['queued', 'torbox', 'downloading', 'paused'].includes(job.status));
+    const queued = (episode: number) => active.some((job) => !job.episodes?.length || job.episodes.includes(episode));
     for (const episode of requested) {
-      if (!aired(episode.released) || (body.skipOwned !== false && episode.owned)) skipped.push(episode.episode);
+      if (!aired(episode.released) || (body.skipOwned !== false && (episode.owned || queued(episode.episode)))) skipped.push(episode.episode);
       else wanted.push(episode.episode);
     }
     const plan = await search.planSeason(id, season, wanted);
@@ -347,6 +355,8 @@ export function registerApi(router: Router, deps: Deps): void {
   // --- Follows, schedule, notifications --------------------------------------------
   router.get('/api/follows', (ctx) => ctx.json(200, { follows: follows.follows }));
 
+  router.post('/api/follows/library', async (ctx) => ctx.json(200, { added: await follows.followLibrary(), follows: follows.follows }));
+
   router.post('/api/follows', async (ctx) => {
     const body = await ctx.body();
     const meta = await catalog.meta(asType(body.type), asImdb(body.imdbId));
@@ -367,6 +377,22 @@ export function registerApi(router: Router, deps: Deps): void {
 
   router.get('/api/schedule', async (ctx) => {
     ctx.json(200, { items: await follows.schedule(jobs.jobs) });
+  });
+
+  // A calendar app can't sign in, so the feed lives outside /api behind its own private token.
+  const calendarUrls = (ctx: Context) => {
+    const url = `${settings.value.addon.publicUrl || ctx.baseUrl}/calendar/${settings.value.calendarToken}/haul.ics`;
+    return { url, webcalUrl: url.replace(/^https?:\/\//, 'webcal://') };
+  };
+  router.get('/api/calendar', (ctx) => ctx.json(200, calendarUrls(ctx)));
+  router.post('/api/calendar/regenerate', (ctx) => { settings.regenerateCalendarToken(); ctx.json(200, calendarUrls(ctx)); });
+  router.get('/calendar/:token/haul.ics', async (ctx) => {
+    const given = Buffer.from(ctx.params.token ?? '');
+    const expected = Buffer.from(settings.value.calendarToken);
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return ctx.json(404, { error: 'Not found' });
+    const body = scheduleCalendar(await follows.schedule(jobs.jobs), settings.value.addon.publicUrl || ctx.baseUrl);
+    ctx.res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Length': String(Buffer.byteLength(body)), 'Cache-Control': 'no-store', 'Content-Disposition': 'inline; filename="haul.ics"' });
+    ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
   });
 
   router.post('/api/notifications/test', async (ctx) => {

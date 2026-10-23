@@ -207,7 +207,8 @@ export class SearchService {
   async planSeason(imdbId: string, season: number, wanted: number[]): Promise<SeasonPlan> {
     const plan: SeasonPlan = { imdbId, season, items: [], missing: [], skipped: [], totalSize: 0, cachedCount: 0 };
     if (!wanted.length) return plan;
-    const packs = await this.seasonPacks(imdbId, season, wanted[0]!, wanted.length).catch(() => [] as Release[]);
+    let failures = 0;
+    const packs = await this.seasonPacks(imdbId, season, wanted[0]!, wanted.length).catch(() => { failures += 1; return [] as Release[]; });
     const coversAll = (release: Release) => release.packEpisodes?.length
       ? wanted.every((episode) => release.packEpisodes!.includes(episode))
       : release.kind === 'season' && !release.info.episodes.length;
@@ -229,12 +230,14 @@ export class SearchService {
     const queue = [...wanted];
     const worker = async () => {
       for (let episode = queue.shift(); episode !== undefined; episode = queue.shift()) {
-        const releases = await this.episode(imdbId, season, episode).catch(() => [] as Release[]);
+        const releases = await this.episode(imdbId, season, episode).catch(() => { failures += 1; return [] as Release[]; });
         const best = releases.filter((release) => release.score > -40)[0];
         if (best) picks.set(episode, best);
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    // Every search failing means the sources are down or limiting us, not that nothing exists.
+    if (failures === wanted.length + 1) throw new Error('The torrent sources didn\'t answer. Try again in a minute.');
     const allCached = wanted.every((episode) => picks.get(episode)?.cached);
     if (!allCached && bestPack) return usePack(bestPack);
 

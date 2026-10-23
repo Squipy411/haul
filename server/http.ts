@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
 export interface Context {
   req: IncomingMessage;
@@ -134,6 +135,46 @@ export function mimeType(file: string): string {
   return MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
 }
 
+export type Encoding = 'br' | 'gzip';
+const COMPRESSIBLE = /^(text\/|application\/(json|javascript|manifest\+json)|image\/svg)/;
+
+/** The best compression the client accepts, or null. */
+export function pickEncoding(req: IncomingMessage, contentType: string, size: number): Encoding | null {
+  if (size < 1024 || !COMPRESSIBLE.test(contentType)) return null;
+  const accept = String(req.headers['accept-encoding'] || '');
+  return /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null;
+}
+
+/** Fast settings for API responses made on every request; the dashboard files use the slow, small ones once. */
+function zlibOptions(encoding: Encoding, size: number, best: boolean): zlib.BrotliOptions | zlib.ZlibOptions {
+  return encoding === 'br'
+    ? { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: best ? 11 : 4, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: size } }
+    : { level: best ? 9 : 5 };
+}
+
+export function compressSync(body: Buffer, encoding: Encoding): Buffer {
+  return encoding === 'br' ? zlib.brotliCompressSync(body, zlibOptions('br', body.length, false)) : zlib.gzipSync(body, zlibOptions('gzip', body.length, false));
+}
+
+/** Compressed dashboard files, keyed by path, modification time and encoding. */
+const compressed = new Map<string, Promise<Buffer>>();
+
+function compressedFile(file: string, stat: fs.Stats, encoding: Encoding): Promise<Buffer> {
+  const key = `${file}:${stat.mtimeMs}:${encoding}`;
+  let entry = compressed.get(key);
+  if (!entry) {
+    if (compressed.size > 200) compressed.clear();
+    entry = fs.promises.readFile(file).then((raw) => new Promise<Buffer>((resolve, reject) => {
+      const done = (error: Error | null, result: Buffer) => (error ? reject(error) : resolve(result));
+      if (encoding === 'br') zlib.brotliCompress(raw, zlibOptions('br', raw.length, true), done);
+      else zlib.gzip(raw, zlibOptions('gzip', raw.length, true), done);
+    }));
+    entry.catch(() => compressed.delete(key));
+    compressed.set(key, entry);
+  }
+  return entry;
+}
+
 /** Serves the built dashboard, falling back to index.html for client-side routes. */
 export function serveStatic(webDir: string, ctx: Context): boolean {
   const { req, res, url } = ctx;
@@ -163,8 +204,23 @@ export function serveStatic(webDir: string, ctx: Context): boolean {
   if (file.endsWith('.html')) {
     headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self'; script-src 'self'; frame-ancestors 'self'; base-uri 'self'";
   }
-  res.writeHead(200, headers);
-  if (req.method === 'HEAD') res.end();
-  else fs.createReadStream(file).pipe(res);
+  const encoding = pickEncoding(req, headers['Content-Type']!, stat.size);
+  if (!encoding) {
+    res.writeHead(200, headers);
+    if (req.method === 'HEAD') res.end();
+    else fs.createReadStream(file).pipe(res);
+    return true;
+  }
+  const target = file;
+  compressedFile(target, stat, encoding).then((body) => {
+    if (res.headersSent) return;
+    res.writeHead(200, { ...headers, 'Content-Length': String(body.length), 'Content-Encoding': encoding, Vary: 'Accept-Encoding' });
+    res.end(req.method === 'HEAD' ? undefined : body);
+  }, () => {
+    if (res.headersSent) return;
+    res.writeHead(200, { ...headers, Vary: 'Accept-Encoding' });
+    if (req.method === 'HEAD') res.end();
+    else fs.createReadStream(target).pipe(res);
+  });
   return true;
 }

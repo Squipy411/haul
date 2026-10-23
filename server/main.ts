@@ -5,7 +5,7 @@ import { registerAddon } from './addon.js';
 import { OPEN_ROUTES, registerApi } from './api.js';
 import { Auth } from './auth.js';
 import { type ServerOptions, VERSION, optionsFromEnv } from './config.js';
-import { type Context, HttpError, Router, parseCookies, readBody, requestBaseUrl, serveStatic } from './http.js';
+import { type Context, HttpError, Router, compressSync, parseCookies, pickEncoding, readBody, requestBaseUrl, serveStatic } from './http.js';
 import { JobManager } from './jobs.js';
 import { Library } from './library.js';
 import { SearchService } from './search.js';
@@ -73,8 +73,11 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       body: () => readBody(req),
       json: (status, data, headers = {}) => {
         if (res.headersSent) return;
-        const body = JSON.stringify(data);
-        res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': String(Buffer.byteLength(body)), ...headers });
+        const text = Buffer.from(JSON.stringify(data));
+        const type = 'application/json; charset=utf-8';
+        const encoding = pickEncoding(req, type, text.length);
+        const body = encoding ? compressSync(text, encoding) : text;
+        res.writeHead(status, { 'Content-Type': type, 'Content-Length': String(body.length), ...(encoding ? { 'Content-Encoding': encoding, Vary: 'Accept-Encoding' } : {}), ...headers });
         res.end(req.method === 'HEAD' ? undefined : body);
       },
       baseUrl: requestBaseUrl(req)

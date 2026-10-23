@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Episode, Follow, Job, MediaType, Meta, Release, SeasonPlan } from '../../../shared/types';
 import { api } from '../api';
 import { FollowControl } from '../components/Follow';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
 import { Empty, ErrorNote, Loading, Menu, Picker, Sheet, TabBar, Tick, Toggle, join } from '../components/ui';
 import { airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
-import { useCrumb } from '../shell';
+import { diskFor, useCrumb, useStatus } from '../shell';
 
 const aired = (episode: Episode) => !episode.released || Date.parse(episode.released) <= Date.now() + 12 * 3600_000;
 const seasonName = (season: number) => (season === 0 ? 'Specials' : `Season ${season}`);
@@ -92,6 +92,8 @@ function PlanSheet({ meta, season, episodes, onClose }: { meta: Meta; season: nu
   const { data: plan, error, loading, reload } = useAsync<SeasonPlan>(() => api.planSeason(meta.id, season, episodes, skipOwned), [meta.id, season, skipOwned]);
   const [busy, setBusy] = useState(false);
   const count = plan ? plan.items.reduce((sum, item) => sum + item.episodes.length, 0) : 0;
+  const disk = diskFor(useStatus(), 'Shows');
+  const tooBig = Boolean(plan && disk && plan.totalSize > disk.free);
 
   const start = async () => {
     if (!plan) return;
@@ -131,8 +133,10 @@ function PlanSheet({ meta, season, episodes, onClose }: { meta: Meta; season: nu
               <div><b>{count}</b><span>episodes</span></div>
               <div><b>{plan.totalSize ? bytes(plan.totalSize) : '–'}</b><span>about this much</span></div>
               <div><b>{plan.cachedCount}</b><span>ready now on TorBox</span></div>
+              {disk && <div><b>{bytes(disk.free)}</b><span>free on the disk</span></div>}
             </div>
           )}
+          {tooBig && <div className="notice warning" style={{ marginBottom: 12 }}>This is more than the {bytes(disk!.free)} free on the disk for shows. Haul downloads what fits and waits for space before each remaining file.</div>}
           {!plan.items.length && <Empty title="Nothing to download">{plan.skipped.length ? 'You already have every episode that is out.' : 'No releases were found for this season.'}</Empty>}
           <div className="table rel-table">
             {plan.items.map((item) => (
@@ -153,10 +157,95 @@ function PlanSheet({ meta, season, episodes, onClose }: { meta: Meta; season: nu
           </div>
           <div className="stack" style={{ marginTop: 12, gap: 8 }}>
             {plan.missing.length > 0 && <div className="notice warning">No release found for {episodeRange(plan.missing)}. Try those episodes on their own later.</div>}
-            {plan.skipped.length > 0 && <div className="notice">Skipping {episodeRange(plan.skipped)}: already in your library or not out yet.</div>}
+            {plan.skipped.length > 0 && <div className="notice">Skipping {episodeRange(plan.skipped)}: already in your library, downloading, or not out yet.</div>}
           </div>
         </>
       )}
+    </Sheet>
+  );
+}
+
+/** Plans every season with episodes you don't have, one season at a time, then downloads them all together. */
+function EverythingSheet({ meta, seasons, onClose }: { meta: Meta; seasons: number[]; onClose: () => void }) {
+  const download = useDownloader(meta);
+  const disk = diskFor(useStatus(), 'Shows');
+  const [plans, setPlans] = useState<Array<{ season: number; plan?: SeasonPlan; error?: string }>>(() => seasons.map((season) => ({ season })));
+  const [busy, setBusy] = useState(false);
+
+  const alive = useRef(true);
+  const planOne = async (season: number) => {
+    setPlans((current) => current.map((entry) => (entry.season === season ? { season } : entry)));
+    const result = await api.planSeason(meta.id, season, undefined, true).then((plan) => ({ plan }), (error: Error) => ({ error: error.message }));
+    if (alive.current) setPlans((current) => current.map((entry) => (entry.season === season ? { season, ...result } : entry)));
+  };
+  useEffect(() => {
+    alive.current = true;
+    (async () => { for (const season of seasons) if (alive.current) await planOne(season); })();
+    return () => { alive.current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const done = plans.filter((entry) => entry.plan || entry.error).length;
+  const planning = done < plans.length;
+  const ready = plans.filter((entry) => entry.plan?.items.length);
+  const episodes = ready.reduce((sum, entry) => sum + entry.plan!.items.reduce((count, item) => count + item.episodes.length, 0), 0);
+  const size = ready.reduce((sum, entry) => sum + entry.plan!.totalSize, 0);
+  const cached = ready.reduce((sum, entry) => sum + entry.plan!.cachedCount, 0);
+
+  const start = async () => {
+    setBusy(true);
+    const items = ready.flatMap((entry) => entry.plan!.items.map((item) => ({ release: item.release, season: entry.season, episodes: item.episodes })));
+    const ok = await download(items, `${meta.name}, ${ready.length} season${ready.length === 1 ? '' : 's'}`);
+    setBusy(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title={`Everything missing from ${meta.name}`}
+      description="Haul plans each season the same way as Download season: a good pack when one is ready, otherwise the best release for each episode. Episodes you have or that are already downloading are skipped."
+      footer={
+        <>
+          <span className="hint">{planning ? `Planning season ${plans[done]?.season ?? ''}, ${done} of ${plans.length} done…` : ''}</span>
+          <div className="row">
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn primary" disabled={planning || !episodes || busy} onClick={start}>
+              {(busy || planning) && <span className="spinner" />}{planning ? 'Planning…' : `Download ${episodes} episode${episodes === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </>
+      }
+    >
+      <div className="plan-figure">
+        <div><b>{episodes}</b><span>episodes</span></div>
+        <div><b>{size ? bytes(size) : '–'}</b><span>about this much</span></div>
+        <div><b>{cached}</b><span>ready now on TorBox</span></div>
+        {disk && <div><b>{bytes(disk.free)}</b><span>free on the disk</span></div>}
+      </div>
+      <div className="plan-progress" aria-hidden="true"><i style={{ width: `${(done / Math.max(1, plans.length)) * 100}%` }} /></div>
+      {!planning && disk && size > disk.free && <div className="notice warning" style={{ marginBottom: 12 }}>This is more than the {bytes(disk.free)} free on the disk for shows. Haul downloads what fits and waits for space before each remaining file.</div>}
+      <div className="table">
+        {plans.map(({ season, plan, error }) => {
+          const count = plan?.items.reduce((sum, item) => sum + item.episodes.length, 0) ?? 0;
+          const packs = plan?.items.filter((item) => item.release.kind === 'season' || item.release.kind === 'multi-season').length ?? 0;
+          return (
+            <div key={season} className="trow" style={{ gridTemplateColumns: '110px minmax(0, 1fr) auto' }}>
+              <span className="t1">{seasonName(season)}</span>
+              <span className="muted truncate" style={{ fontSize: 13 }}>
+                {error ? error
+                  : !plan ? 'Waiting…'
+                    : !count ? (plan.missing.length ? `No releases found for ${episodeRange(plan.missing)}` : 'Nothing to get')
+                      : join([`${count} episode${count === 1 ? '' : 's'}`, packs ? (plan.items.length === 1 ? 'one pack' : `${packs} pack${packs === 1 ? '' : 's'}`) : `${plan.items.length} torrent${plan.items.length === 1 ? '' : 's'}`, plan.totalSize ? bytes(plan.totalSize) : '', plan.missing.length ? `${plan.missing.length} not found` : ''])}
+              </span>
+              {plan && count > 0 ? <Availability cached={plan.cachedCount === count} />
+                : error ? <button className="btn sm" onClick={() => void planOne(season)}>Try again</button>
+                  : !plan ? <span className="spinner" /> : <span />}
+            </div>
+          );
+        })}
+      </div>
     </Sheet>
   );
 }
@@ -213,6 +302,7 @@ function SeriesView({ meta }: { meta: Meta }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [openEpisode, setOpenEpisode] = useState<number | null>(null);
   const [plan, setPlan] = useState<{ episodes?: number[] } | null>(null);
+  const [everything, setEverything] = useState(false);
   const [packSkipOwned, setPackSkipOwned] = useState(true);
   const download = useDownloader(meta);
   const incoming = useIncoming(meta.id, season);
@@ -255,6 +345,9 @@ function SeriesView({ meta }: { meta: Meta }) {
 
   if (!seasons.length) return <Empty title="No episode list yet">The catalog doesn't list this show's episodes yet.</Empty>;
 
+  // Seasons (not specials) with episodes that are out and not in the library.
+  const seasonsMissing = seasons.filter((value) => value > 0 && meta.episodes.some((episode) => episode.season === value && !episode.owned && aired(episode)));
+
   const summary = !missing.length && owned.length
     ? `You have every episode that's out`
     : join([`${episodes.length} episodes`, owned.length ? `${owned.length} in your library` : '', incoming.size ? `${incoming.size} on the way` : '', missing.length ? `${missing.length} to get` : '']);
@@ -271,6 +364,7 @@ function SeriesView({ meta }: { meta: Meta }) {
             <span className="muted num">{summary}</span>
           </div>
           <div className="row">
+            {seasonsMissing.length > 1 && <button className="btn" onClick={() => setEverything(true)}>Get all {seasonsMissing.length} seasons</button>}
             <button className="btn primary" onClick={() => setPlan({})} disabled={!missing.length}>
               {missing.length ? `Download ${seasonName(season).toLowerCase()}` : 'Season complete'}
             </button>
@@ -343,6 +437,7 @@ function SeriesView({ meta }: { meta: Meta }) {
         </div>
       )}
       {plan && <PlanSheet meta={meta} season={season} episodes={plan.episodes} onClose={() => { setPlan(null); setSelected(new Set()); }} />}
+      {everything && <EverythingSheet meta={meta} seasons={seasonsMissing} onClose={() => setEverything(false)} />}
     </>
   );
 }

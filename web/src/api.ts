@@ -68,10 +68,13 @@ export const api = {
   follows: () => request<{ follows: Follow[] }>('GET', '/api/follows'),
   follow: (type: MediaType, imdbId: string, autoDownload: boolean, want?: VersionFilter) => request<{ follow: Follow; notificationsReady: boolean }>('POST', '/api/follows', { type, imdbId, autoDownload, want }),
   updateFollow: (id: string, patch: { autoDownload?: boolean; want?: VersionFilter | null }) => request<{ follow: Follow }>('POST', `/api/follows/${id}`, patch),
+  followLibrary: () => request<{ added: number; follows: Follow[] }>('POST', '/api/follows/library'),
   unfollow: (id: string) => request<{ ok: true }>('DELETE', `/api/follows/${id}`),
   schedule: () => request<{ items: ScheduleItem[] }>('GET', '/api/schedule'),
   testNotification: () => request<{ ok: true }>('POST', '/api/notifications/test'),
 
   addon: () => request<AddonInfo>('GET', '/api/addon'),
-  regenerateAddon: () => request<AddonInfo>('POST', '/api/addon/regenerate')
+  regenerateAddon: () => request<AddonInfo>('POST', '/api/addon/regenerate'),
+  calendar: () => request<{ url: string; webcalUrl: string }>('GET', '/api/calendar'),
+  regenerateCalendar: () => request<{ url: string; webcalUrl: string }>('POST', '/api/calendar/regenerate')
 };

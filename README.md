@@ -15,12 +15,15 @@ You need a TorBox account and either Docker or a Windows PC.
 - **Browse and search** films and series (catalog from Cinemeta, no API key).
 - **Download a whole season.** Haul uses one season pack when a good one exists, otherwise it picks the best single-episode torrent for every episode. Episodes you already have and episodes that haven't aired are skipped. You see the plan before it starts.
 - **Compare season packs** by resolution, source, HDR, codec, audio, size and seeders, and whether TorBox already has them cached. Largest files are listed first (switch to best match or most seeders if you like). From a multi-season pack, only the season you asked for is downloaded.
+- **Get a whole show** with one button: Haul plans every season you're missing and downloads them together.
 - **Pick single episodes**, or tick several and download just those.
 - **Films** get the same release table, best match first.
 - **Follow a show or a film** and get a phone notification the moment a torrent for the next episode is out, not just when it airs. Optionally let Haul download it right away.
 - **Wait for one exact version.** Following a film that isn't on digital yet? Tell Haul you only want, say, a 4K WEB-DL. It ignores cams, rips and everything else, and grabs the first 4K WEB-DL the moment one appears.
 - **See what's coming** on the Upcoming page: new episodes of everything you follow or own, from last week to six weeks ahead, with whether a torrent is out yet.
 - **Track progress** through TorBox → your machine → library, with pause, retry and cancel.
+- **Fast downloads.** Big files come down over several connections at once (TorBox limits each one), resume exactly where they stopped, and a stalled connection is retried instead of hanging. Haul checks there's disk space before each file and shows what's free in the sidebar.
+- **On your phone:** add Haul to your home screen, get notifications through ntfy, and subscribe your calendar to the Upcoming schedule.
 - **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too.
 
 | Season packs | Series page |
@@ -112,6 +115,10 @@ With **Download automatically** on, Haul starts the download as soon as a versio
 To hold out for one particular version, choose **Which versions** when you follow: any mix of quality (4K, 1080p, 720p), source (WEB-DL, WEBRip, BluRay, Remux) and HDR (Dolby Vision, HDR10, none). Everything else is ignored, and with **Grab the first match** on, the first matching torrent is downloaded the moment it shows up. Films are checked every 20 minutes once they're out. Haul also skips trailers and prologues, uploads that say they're a different film with the same name, and telesyncs labelled as WEB-DL. You can change the versions later from the title page or Upcoming → Following.
 
 The topic is a long random name. On ntfy.sh anyone who knows it can read your notifications, so treat it like a password, or point Haul at your own ntfy server (with an access token if it needs sign-in). You can also add a Discord webhook. Notifications are off until you turn them on, so a fresh install never sends anything.
+
+## Calendar
+
+Upcoming → **Add to calendar** gives you a private calendar address. On an iPhone, iPad or Mac, tap **Subscribe**; elsewhere, add a calendar "from URL" and paste it. Episodes appear at their air time and followed movies on their release day, with whether a torrent is out yet. Google Calendar fetches calendars from Google's servers, so it only works if Haul is reachable from the internet.
 
 ## Nuvio and Stremio
 

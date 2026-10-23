@@ -16,9 +16,18 @@ export interface RawResult {
 const HASH = /^[a-f0-9]{40}$/i;
 
 async function getJson(url: string, headers: Record<string, string> = {}, timeout = 15_000): Promise<any> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeout), headers: { 'User-Agent': 'Haul/1.0', ...headers } });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeout), headers: { 'User-Agent': 'Haul/1.0', ...headers } });
+    if (response.ok) return response.json();
+    // Rate limits and hiccups usually clear in a moment; one retry saves a whole season plan.
+    if (attempt < 2 && (response.status === 429 || response.status >= 500)) {
+      await response.body?.cancel();
+      const wait = Number(response.headers.get('retry-after'));
+      await new Promise((resolve) => setTimeout(resolve, Number.isFinite(wait) && wait > 0 ? Math.min(wait, 10) * 1000 : 1500));
+      continue;
+    }
+    throw new Error(`HTTP ${response.status}`);
+  }
 }
 
 /** Parses streams from any Stremio addon that returns torrents (infoHash), e.g. Torrentio. */

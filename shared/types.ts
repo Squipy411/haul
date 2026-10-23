@@ -79,6 +79,8 @@ export interface Settings {
   };
   downloads: {
     concurrentFiles: number;
+    /** Parallel connections per file; TorBox limits the speed of each one. */
+    connections: number;
     removeFromTorbox: boolean;
     subtitles: boolean;
     episodeTitles: boolean;
@@ -141,9 +143,17 @@ export interface Status {
   libraryCounts: { movies: number; series: number; episodes: number };
   desktop: boolean;
   update: { version: string; url: string } | null;
+  /** One entry per disk the library and downloads use. */
+  disks: DiskSpace[];
 }
 
-/** A show or movie you follow: Haul watches the torrent sources for it. */
+export interface DiskSpace {
+  /** What lives on this disk: "Movies", "Shows", "Downloads in progress". */
+  labels: string[];
+  free: number;
+  total: number;
+}
+
 /** Which versions a follow accepts. An empty list accepts anything. */
 export interface VersionFilter {
   resolutions: Resolution[];
@@ -153,6 +163,7 @@ export interface VersionFilter {
   hdr: Array<'DV' | 'HDR' | 'SDR'>;
 }
 
+/** A show or movie you follow: Haul watches the torrent sources for it. */
 export interface Follow {
   id: string;
   type: MediaType;

@@ -97,6 +97,8 @@ export class FollowService {
   private readonly lastCheck = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
+  /** The schedule reads every show's episode list, so it's kept for a minute. */
+  private scheduleCache: { at: number; value: Promise<ScheduleItem[]> } | null = null;
 
   constructor(private readonly deps: Deps) {
     this.file = new JsonFile(path.join(deps.options.dataDir, 'follows.json'), () => ({ follows: [] }));
@@ -141,6 +143,7 @@ export class FollowService {
     };
     this.follows.unshift(follow);
     this.file.save();
+    this.scheduleCache = null;
     this.lastCheck.delete(follow.id);
     void this.tick();
     return follow;
@@ -161,6 +164,7 @@ export class FollowService {
       }
     }
     this.file.save();
+    this.scheduleCache = null;
     void this.tick();
     return follow;
   }
@@ -193,6 +197,21 @@ export class FollowService {
   unfollow(id: string): void {
     this.file.data.follows = this.follows.filter((follow) => follow.id !== id);
     this.file.save();
+    this.scheduleCache = null;
+  }
+
+  /** Follows every show in the library that isn't followed yet, without auto-download. */
+  async followLibrary(): Promise<number> {
+    const ids = [...new Set(this.deps.library.items.filter((item) => item.type === 'series' && item.imdbId).map((item) => item.imdbId!))]
+      .filter((id) => !this.find('series', id));
+    let added = 0;
+    for (const id of ids) {
+      try {
+        this.follow(await this.deps.catalog.meta('series', id), false);
+        added += 1;
+      } catch { /* not in the catalog right now; try again another time */ }
+    }
+    return added;
   }
 
   /** One pass over every follow. A pass that's already running is shared rather than doubled. */
@@ -325,7 +344,15 @@ export class FollowService {
   }
 
   /** What's coming and what just came out, for followed shows and shows in the library. */
-  async schedule(jobs: Job[]): Promise<ScheduleItem[]> {
+  schedule(jobs: Job[]): Promise<ScheduleItem[]> {
+    if (this.scheduleCache && Date.now() - this.scheduleCache.at < 60_000) return this.scheduleCache.value;
+    const value = this.buildSchedule(jobs);
+    this.scheduleCache = { at: Date.now(), value };
+    value.catch(() => { this.scheduleCache = null; });
+    return value;
+  }
+
+  private async buildSchedule(jobs: Job[]): Promise<ScheduleItem[]> {
     const followed = new Set(this.follows.map((follow) => `${follow.type}:${follow.imdbId}`));
     const seriesIds = [...new Set([
       ...this.follows.filter((follow) => follow.type === 'series').map((follow) => follow.imdbId),

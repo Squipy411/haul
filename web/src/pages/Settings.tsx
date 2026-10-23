@@ -271,9 +271,14 @@ export function SettingsPage() {
         </Section>
 
         <Section title="Downloading" description={<>Files are named for Plex, Jellyfin and Nuvio, for example <span style={{ color: 'var(--text)' }}>Breaking Bad (2008) / Season 01 / Breaking Bad (2008) - S01E04 - Cancer Man - 1080p.mkv</span></>}>
-          <Field id="d-parallel" label="Files at once" hint="How many files download to this machine at the same time.">
-            <input id="d-parallel" className="input num" type="number" min={1} max={10} style={{ width: 90 }} value={draft.downloads.concurrentFiles} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, concurrentFiles: number(event.target.value) } }))} />
-          </Field>
+          <div className="two">
+            <Field id="d-parallel" label="Files at once" hint="How many files download to this machine at the same time.">
+              <input id="d-parallel" className="input num" type="number" min={1} max={10} style={{ width: 90 }} value={draft.downloads.concurrentFiles} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, concurrentFiles: number(event.target.value) } }))} />
+            </Field>
+            <Field id="d-connections" label="Connections per file" hint="TorBox caps the speed of each connection, so big files download in parts at once. Use 1 if downloads fail.">
+              <input id="d-connections" className="input num" type="number" min={1} max={8} style={{ width: 90 }} value={draft.downloads.connections} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, connections: number(event.target.value) } }))} />
+            </Field>
+          </div>
           <div className="divider" />
           <SwitchRow title="English subtitles" description="Saves matching .srt files next to the video." checked={draft.downloads.subtitles} onChange={(subtitles) => set((value) => ({ ...value, downloads: { ...value.downloads, subtitles } }))} />
           <SwitchRow title="Episode titles in file names" checked={draft.downloads.episodeTitles} onChange={(episodeTitles) => set((value) => ({ ...value, downloads: { ...value.downloads, episodeTitles } }))} />

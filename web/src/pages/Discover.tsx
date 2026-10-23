@@ -1,7 +1,7 @@
 import type { Job } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
-import { Link, airDate, bytes, duration, episodeRange, speed, useAsync, usePolling } from '../lib';
+import { Link, airDate, bytes, duration, episodeRange, pad, speed, useAsync, usePolling } from '../lib';
 import { useOpenSearch } from '../shell';
 
 const CATALOG_ID: Record<string, string> = { top: 'top', new: 'year', featured: 'imdbRating' };
@@ -84,6 +84,52 @@ function NewEpisodes() {
   );
 }
 
+function when(released: string): string {
+  const at = new Date(released);
+  const days = Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime() - new Date(new Date().setHours(0, 0, 0, 0)).getTime()) / 86_400_000);
+  const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Tomorrow ${time}`;
+  if (days === -1) return `Yesterday ${time}`;
+  return `${at.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
+}
+
+/** The next week of things you follow, and whether their torrents are out yet. Hidden when there's nothing. */
+function ComingUp() {
+  const { data } = useAsync(() => api.schedule(), []);
+  const now = Date.now();
+  const items = (data?.items ?? [])
+    .filter((item) => item.followed && item.state !== 'owned' && item.state !== 'aired' && Date.parse(item.released) > now - 2 * 86_400_000 && Date.parse(item.released) < now + 7 * 86_400_000)
+    .slice(0, 6);
+  if (!items.length) return null;
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>Coming up</h2>
+        <Link to="/upcoming" className="faint" style={{ fontSize: 13 }}>See the schedule</Link>
+      </div>
+      <div className="new-ep-list">
+        {items.map((item) => {
+          const to = `/title/${item.type}/${item.imdbId}${item.season !== undefined ? `?season=${item.season}` : ''}`;
+          return (
+            <div key={`${item.imdbId}-${item.season}-${item.episode}`} className="new-ep">
+              <Link to={to} className="still">{item.background && <img src={item.background} alt="" loading="lazy" />}</Link>
+              <div style={{ minWidth: 0 }}>
+                <Link to={to} className="name truncate" style={{ display: 'block' }}>{item.title}</Link>
+                <div className="meta truncate">{join([item.type === 'movie' ? 'Movie' : `S${pad(item.season!)}E${pad(item.episode!)}`, item.type === 'movie' ? '' : when(item.released)])}</div>
+              </div>
+              {item.state === 'available' ? <span className="pill positive">Torrent out</span>
+                : item.state === 'downloading' ? <span className="pill transfer">Downloading</span>
+                  : item.state === 'searching' ? <span className="pill transfer">Looking</span>
+                    : <span className="pill">Not out yet</span>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function Discover() {
   const openSearch = useOpenSearch();
   const { data, error, reload } = useAsync(() => api.home(), []);
@@ -101,6 +147,7 @@ export function Discover() {
       </div>
       <div className="home-top">
         <Transfers jobs={downloads.data?.jobs ?? []} />
+        <ComingUp />
         <NewEpisodes />
       </div>
       {error && <div style={{ marginTop: 20 }}><ErrorNote message={`The catalog didn't load: ${error}`} onRetry={reload} /></div>}

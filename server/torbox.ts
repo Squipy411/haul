@@ -101,11 +101,16 @@ export class Torbox {
   async checkCached(hashes: string[]): Promise<Map<string, CachedTorrent>> {
     const result = new Map<string, CachedTorrent>();
     const unique = [...new Set(hashes.map((hash) => hash.toLowerCase()))];
-    for (let index = 0; index < unique.length; index += 60) {
-      const chunk = unique.slice(index, index + 60);
-      const data = await this.call<Record<string, CachedTorrent> | CachedTorrent[] | null>('/torrents/checkcached', {
-        query: { hash: chunk.join(','), format: 'object', list_files: true }
-      });
+    const chunks: string[][] = [];
+    for (let index = 0; index < unique.length; index += 60) chunks.push(unique.slice(index, index + 60));
+    // All batches at once: a search waits for one round trip, not one per 60 results.
+    const answers = await Promise.allSettled(chunks.map((chunk) => this.call<Record<string, CachedTorrent> | CachedTorrent[] | null>('/torrents/checkcached', {
+      query: { hash: chunk.join(','), format: 'object', list_files: true }
+    })));
+    if (answers.length && answers.every((answer) => answer.status === 'rejected')) throw (answers[0] as PromiseRejectedResult).reason;
+    for (const answer of answers) {
+      if (answer.status !== 'fulfilled') continue;
+      const data = answer.value;
       const entries = Array.isArray(data) ? data.map((item) => [item.hash, item] as const) : Object.entries(data || {});
       for (const [hash, torrent] of entries) {
         result.set(hash.toLowerCase(), {

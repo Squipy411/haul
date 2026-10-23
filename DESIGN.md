@@ -44,3 +44,4 @@ Built on [Radix](https://www.radix-ui.com) primitives (dialog, switch, checkbox,
 | v4 | True black, one data hue, season map, home shows new episodes and live transfers | The page should answer "what's new and what's moving" first |
 | 1.2 | Upcoming page, Follow, phone notifications, largest-first release sort | Get told when a torrent is out, not when an episode airs |
 | 1.3 | Version chips on Follow (quality, source, HDR); selected chip is outlined, not inverted | Wait for exactly a 4K WEB-DL; several chips can be on at once, so they can't use the one-per-view white pill |
+| 1.4 | Disk meter in the sidebar foot (neutral grey, warning colour under 20 GB), Coming up card on Home, idle card on Downloads, fading poster shelves | Show what matters when nothing is running; the accent stays reserved for live transfers |

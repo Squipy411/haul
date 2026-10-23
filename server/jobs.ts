@@ -4,8 +4,10 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { Job, JobFile, Meta, Release } from '../shared/types.js';
 import type { ServerOptions } from './config.js';
+import { freeBytes } from './disk.js';
 import { downloadToFile, moveFile } from './downloader.js';
 import { planFiles } from './organize.js';
+import { formatBytes } from './release.js';
 import type { SettingsService } from './settings.js';
 import { JsonFile } from './store.js';
 import { type Torbox, TorboxError, type TorboxTorrent, magnetFor } from './torbox.js';
@@ -204,6 +206,15 @@ export class JobManager {
     this.file.save();
   }
 
+  /** Keeps the newest finished downloads, so the list (polled every few seconds) stays small. */
+  private pruneHistory(keep = 300): void {
+    const finished = this.jobs.filter((job) => job.status === 'completed' || job.status === 'cancelled');
+    if (finished.length <= keep) return;
+    const drop = new Set(finished.sort((a, b) => (b.completedAt ?? b.updatedAt) - (a.completedAt ?? a.updatedAt)).slice(keep).map((job) => job.id));
+    this.file.data.jobs = this.jobs.filter((job) => !drop.has(job.id));
+    this.file.save();
+  }
+
   clearFinished(): void {
     this.file.data.jobs = this.jobs.filter((job) => !['completed', 'cancelled'].includes(job.status));
     this.file.save();
@@ -399,9 +410,19 @@ export class JobManager {
     this.touch(job);
     const part = path.join(this.partDir(job), `${file.key}${file.kind === 'subtitle' ? '.srt' : ''}.part`);
     try {
+      const short = await this.shortOfSpace(job, file);
+      if (short) {
+        // Waiting is better than failing halfway through a big file; it starts once space is freed.
+        file.status = 'pending';
+        file.retryAt = Date.now() + 5 * 60_000;
+        job.note = short;
+        return;
+      }
+      if (job.note?.startsWith('Waiting for free space')) job.note = undefined;
       const url = await this.deps.torbox.downloadLink(job.torbox.id!, file.torboxFileId);
       await downloadToFile(url, part, {
         expectedSize: file.size || undefined,
+        connections: this.deps.settings.value.downloads.connections,
         signal: controller.signal,
         onProgress: (bytes) => { file.downloaded = bytes; }
       });
@@ -426,6 +447,22 @@ export class JobManager {
     }
   }
 
+  /** A note when the disk can't take the rest of this file, plus some room to spare. */
+  private async shortOfSpace(job: Job, file: JobFile): Promise<string | null> {
+    if (!file.size) return null;
+    const margin = 512 * 1024 * 1024;
+    const remaining = Math.max(0, file.size - file.downloaded);
+    const [partFree, targetFree] = await Promise.all([
+      freeBytes(this.partDir(job)).catch(() => Infinity),
+      freeBytes(path.dirname(file.target)).catch(() => Infinity)
+    ]);
+    // Same free figure means the same disk: the finished file is renamed into place, not copied.
+    const targetNeeds = partFree === targetFree ? 0 : file.size;
+    if (remaining + margin <= partFree && targetNeeds + margin <= targetFree) return null;
+    const free = Math.min(partFree, targetFree);
+    return `Waiting for free space: ${file.name} needs ${formatBytes(Math.max(remaining, targetNeeds))}, ${formatBytes(free)} is free. Haul tries again every 5 minutes.`;
+  }
+
   private finishIfDone(job: Job): void {
     if (job.status !== 'downloading') return;
     const open = job.files.some((file) => file.status === 'pending' || file.status === 'downloading');
@@ -439,6 +476,7 @@ export class JobManager {
     job.status = 'completed';
     job.note = undefined;
     job.completedAt = Date.now();
+    this.pruneHistory();
     job.speed = 0;
     void this.cleanupPartials(job);
     if (this.deps.settings.value.downloads.removeFromTorbox) void this.releaseTorrent(job);

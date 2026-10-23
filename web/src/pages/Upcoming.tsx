@@ -1,10 +1,10 @@
-import { BellRing } from 'lucide-react';
+import { BellRing, CalendarPlus } from 'lucide-react';
 import { useState } from 'react';
 import type { Follow, ScheduleItem } from '../../../shared/types';
 import { api } from '../api';
 import { FollowSheet, describeWant, isStrict } from '../components/Follow';
-import { Empty, ErrorNote, Loading, TabBar, Toggle, join } from '../components/ui';
-import { Link, ago, pad, useAsync, usePolling, useToast } from '../lib';
+import { Empty, ErrorNote, Loading, Sheet, TabBar, Toggle, join } from '../components/ui';
+import { Link, ago, copyText, pad, useAsync, usePolling, useToast } from '../lib';
 
 const dayKey = (date: Date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 
@@ -103,12 +103,38 @@ function Following() {
   const toast = useToast();
   const { data, error, reload, setData } = useAsync(() => api.follows(), []);
   const [editing, setEditing] = useState<Follow | null>(null);
+  const [adding, setAdding] = useState(false);
   if (error) return <ErrorNote message={error} onRetry={reload} />;
   if (!data) return <Loading />;
-  if (!data.follows.length) return <Empty title="You're not following anything">Open a show or a movie and choose Follow. Haul then tells you as soon as a torrent is out.</Empty>;
+  const followLibrary = async () => {
+    setAdding(true);
+    try {
+      const result = await api.followLibrary();
+      setData({ follows: result.follows });
+      toast(result.added ? `Now following ${result.added} more show${result.added === 1 ? '' : 's'} from your library` : 'You already follow every show in your library');
+    } catch (failure) {
+      toast((failure as Error).message, 'error');
+    } finally {
+      setAdding(false);
+    }
+  };
+  const addAll = <button className="btn" onClick={followLibrary} disabled={adding}>{adding && <span className="spinner" />}Follow all my shows</button>;
+  if (!data.follows.length) {
+    return (
+      <Empty title="You're not following anything">
+        Open a show or a movie and choose Follow, or follow every show in your library at once. Haul then tells you as soon as a new episode's torrent is out.
+        <div style={{ marginTop: 14 }}>{addAll}</div>
+      </Empty>
+    );
+  }
   const update = (next: Follow) => setData({ follows: data.follows.map((follow) => (follow.id === next.id ? next : follow)) });
   return (
-    <div className="table" style={{ marginTop: 10 }}>
+    <>
+    <div className="toolbar">
+      <span className="count">{data.follows.length} followed</span>
+      {addAll}
+    </div>
+    <div className="table">
       {editing && <FollowSheet open onOpenChange={(open) => { if (!open) setEditing(null); }} target={{ type: editing.type, imdbId: editing.imdbId, title: editing.title }} follow={editing} onSaved={(next) => { update(next); toast('Follow updated'); }} />}
       {data.follows.map((follow) => {
         const hits = Object.values(follow.found);
@@ -133,11 +159,46 @@ function Following() {
         );
       })}
     </div>
+    </>
+  );
+}
+
+function CalendarSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const toast = useToast();
+  const { data, setData } = useAsync(() => (open ? api.calendar() : Promise.resolve(undefined)), [open]);
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Add Upcoming to your calendar"
+      description="Your calendar subscribes to this schedule and keeps it up to date: new episodes of everything you follow or own, and followed movies."
+    >
+      {!data ? <Loading /> : (
+        <div className="stack" style={{ gap: 12 }}>
+          <div className="panel" style={{ background: 'var(--raised)' }}>
+            <b>iPhone, iPad or Mac</b>
+            <p className="hint" style={{ margin: '4px 0 12px' }}>Open this page on the device and tap Subscribe. Your phone needs to reach Haul, on your home Wi-Fi or over a VPN such as Tailscale.</p>
+            <a className="btn primary" href={data.webcalUrl}><CalendarPlus size={15} />Subscribe</a>
+          </div>
+          <div className="panel" style={{ background: 'var(--raised)' }}>
+            <b>Any other calendar</b>
+            <p className="hint" style={{ margin: '4px 0 12px' }}>Add a calendar "from URL" and paste this address. Google Calendar reads it from Google's servers, so it only works if Haul is reachable from the internet.</p>
+            <div className="url" title={data.url}>{data.url}</div>
+            <div className="row" style={{ marginTop: 10 }}>
+              <button className="btn sm" onClick={async () => toast(await copyText(data.url) ? 'Calendar address copied' : 'Copy failed')}>Copy</button>
+              <button className="btn sm ghost" onClick={async () => { setData(await api.regenerateCalendar()); toast('New address made. Subscribe again with it.'); }}>Make a new address</button>
+            </div>
+          </div>
+          <p className="hint">Anyone with the address can see your schedule, so keep it to yourself.</p>
+        </div>
+      )}
+    </Sheet>
   );
 }
 
 export function Upcoming() {
   const [tab, setTab] = useState<'schedule' | 'following'>('schedule');
+  const [calendar, setCalendar] = useState(false);
   const follows = useAsync(() => api.follows(), [tab]);
   return (
     <div className="canvas">
@@ -146,7 +207,9 @@ export function Upcoming() {
           <h1>Upcoming</h1>
           <div className="sub">New episodes of shows you follow or own, from last week to the next six weeks. Followed titles are checked for torrents as soon as they air.</div>
         </div>
+        <button className="btn" onClick={() => setCalendar(true)}><CalendarPlus size={15} />Add to calendar</button>
       </div>
+      <CalendarSheet open={calendar} onOpenChange={setCalendar} />
       <TabBar value={tab} onChange={setTab} tabs={[{ value: 'schedule', label: 'Schedule' }, { value: 'following', label: 'Following', count: follows.data?.follows.length }]} />
       {tab === 'schedule' ? <Schedule /> : <Following />}
     </div>

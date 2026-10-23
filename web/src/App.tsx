@@ -1,21 +1,39 @@
 import { Command } from 'cmdk';
 import { CalendarDays, ChevronLeft, Download, House, Library as LibraryIcon, Search, Settings as SettingsIcon } from 'lucide-react';
 import { Tooltip } from 'radix-ui';
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
 import { Figure, Loading, Mark } from './components/ui';
-import { Link, speed, usePolling, useRouter } from './lib';
-import { CrumbContext, SearchContext } from './shell';
-import { Browse } from './pages/Browse';
+import { Link, bytes, speed, usePolling, useRouter } from './lib';
+import { CrumbContext, SearchContext, StatusContext } from './shell';
 import { Discover } from './pages/Discover';
-import { Downloads } from './pages/Downloads';
-import { LibraryPage } from './pages/Library';
-import { Login } from './pages/Login';
-import { SettingsPage } from './pages/Settings';
-import { Setup } from './pages/Setup';
-import { TitlePage } from './pages/Title';
-import { Upcoming } from './pages/Upcoming';
+
+// Home ships with the app; every other page is its own file, fetched in the background once the app is idle.
+const pages = {
+  browse: () => import('./pages/Browse'),
+  downloads: () => import('./pages/Downloads'),
+  library: () => import('./pages/Library'),
+  login: () => import('./pages/Login'),
+  settings: () => import('./pages/Settings'),
+  setup: () => import('./pages/Setup'),
+  title: () => import('./pages/Title'),
+  upcoming: () => import('./pages/Upcoming')
+};
+const Browse = lazy(() => pages.browse().then((module) => ({ default: module.Browse })));
+const Downloads = lazy(() => pages.downloads().then((module) => ({ default: module.Downloads })));
+const LibraryPage = lazy(() => pages.library().then((module) => ({ default: module.LibraryPage })));
+const Login = lazy(() => pages.login().then((module) => ({ default: module.Login })));
+const SettingsPage = lazy(() => pages.settings().then((module) => ({ default: module.SettingsPage })));
+const Setup = lazy(() => pages.setup().then((module) => ({ default: module.Setup })));
+const TitlePage = lazy(() => pages.title().then((module) => ({ default: module.TitlePage })));
+const Upcoming = lazy(() => pages.upcoming().then((module) => ({ default: module.Upcoming })));
+
+function prefetchPages(): void {
+  const load = () => { for (const page of [pages.title, pages.downloads, pages.upcoming, pages.library, pages.settings, pages.browse]) void page().catch(() => undefined); };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(load, { timeout: 4000 });
+  else setTimeout(load, 1500);
+}
 
 const NAV = [
   { to: '/', label: 'Home', icon: House, match: (path: string) => path === '/' || path.startsWith('/title') || path.startsWith('/browse') || path.startsWith('/search') },
@@ -35,6 +53,21 @@ function Page({ path }: { path: string }) {
   if (path.startsWith('/library')) return <LibraryPage />;
   if (path.startsWith('/settings')) return <SettingsPage />;
   return <Discover />;
+}
+
+/** Free space on the fullest library disk, with every disk in the tooltip. */
+function DiskMeter({ status }: { status: Status }) {
+  const disks = status.disks ?? [];
+  if (!disks.length) return null;
+  const tightest = disks.reduce((low, disk) => (disk.free / disk.total < low.free / low.total ? disk : low));
+  const used = tightest.total ? 1 - tightest.free / tightest.total : 0;
+  const detail = disks.map((disk) => `${disk.labels.join(', ')}: ${bytes(disk.free)} free of ${bytes(disk.total)}`).join('\n');
+  return (
+    <div className={`disk-meter ${tightest.free < 20 * 1024 ** 3 ? 'low' : ''}`} title={detail}>
+      <span className="num">{bytes(tightest.free)} free{disks.length > 1 ? ` on ${tightest.labels[0]!.toLowerCase()}` : ''}</span>
+      <i aria-hidden="true"><b style={{ width: `${Math.round(used * 100)}%` }} /></i>
+    </div>
+  );
 }
 
 function Palette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -107,6 +140,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
 
   const active = status.activeDownloads;
   return (
+    <StatusContext.Provider value={status}>
     <CrumbContext.Provider value={setCrumb}>
       <SearchContext.Provider value={openSearch}>
         <Tooltip.Provider>
@@ -123,6 +157,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
             </nav>
             <div className="side-foot">
               {status.update && <a href={status.update.url} target="_blank" rel="noreferrer">Haul {status.update.version} is out. Update ↗</a>}
+              <DiskMeter status={status} />
               <span className="num">{status.libraryCounts.series} shows · {status.libraryCounts.movies} movies</span>
               <span>Haul {status.version}</span>
             </div>
@@ -168,6 +203,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
         </Tooltip.Provider>
       </SearchContext.Provider>
     </CrumbContext.Provider>
+    </StatusContext.Provider>
   );
 }
 
@@ -189,6 +225,7 @@ export function App() {
     };
   }, [refresh]);
   usePolling(refresh, 3000);
+  useEffect(() => { if (status?.authenticated && status.setupComplete) prefetchPages(); }, [status?.authenticated, status?.setupComplete]);
 
   // Old /search?q= links open the palette's results on Home instead.
   useEffect(() => { if (path.startsWith('/search')) navigate('/', { replace: true }); }, [path, search, navigate]);
@@ -203,9 +240,9 @@ export function App() {
       ? <div className="gate"><div className="gate-card"><h1>Haul isn't responding</h1><p>The server may be restarting.</p><div><button className="btn primary" onClick={refresh}>Try again</button></div></div></div>
       : <Loading />;
   }
-  if (status.needsPassword) return <Setup createPassword onDone={refresh} />;
-  if (!status.authenticated) return <Login onDone={refresh} desktop={status.desktop} passwordSet={status.passwordSet} />;
-  if (!status.setupComplete) return <Setup createPassword={false} onDone={refresh} />;
+  if (status.needsPassword) return <Suspense fallback={<Loading />}><Setup createPassword onDone={refresh} /></Suspense>;
+  if (!status.authenticated) return <Suspense fallback={<Loading />}><Login onDone={refresh} desktop={status.desktop} passwordSet={status.passwordSet} /></Suspense>;
+  if (!status.setupComplete) return <Suspense fallback={<Loading />}><Setup createPassword={false} onDone={refresh} /></Suspense>;
 
-  return <Shell status={status}><Page path={path} /></Shell>;
+  return <Shell status={status}><Suspense fallback={<Loading />}><Page path={path} /></Suspense></Shell>;
 }

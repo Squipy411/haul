@@ -4,6 +4,7 @@ import type { Job } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Figure, Loading, Menu, type MenuAction, TabBar, join } from '../components/ui';
 import { Link, ago, bytes, duration, speed, useAsync, usePolling, useToast } from '../lib';
+import { useOpenSearch } from '../shell';
 
 type Tab = 'active' | 'done' | 'stopped';
 
@@ -107,6 +108,31 @@ function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
   );
 }
 
+/** In progress, with nothing running: what happened lately and where to go next. */
+function Idle({ jobs, onShowFinished }: { jobs: Job[]; onShowFinished: () => void }) {
+  const openSearch = useOpenSearch();
+  const week = Date.now() - 7 * 86_400_000;
+  const recent = jobs.filter((job) => job.status === 'completed' && (job.completedAt ?? 0) > week);
+  const size = recent.reduce((sum, job) => sum + job.files.reduce((total, file) => total + (file.status === 'done' ? file.size : 0), 0), 0);
+  return (
+    <section className="card idle">
+      <div>
+        <h2>Nothing downloading right now</h2>
+        <p className="muted">
+          {recent.length
+            ? <>{recent.length} download{recent.length === 1 ? '' : 's'} finished this week, {bytes(size)} in all. The latest was {recent[0]!.title}{recent[0]!.label ? `, ${recent[0]!.label}` : ''}.</>
+            : 'Pick a show or a movie and it lands here while TorBox and Haul fetch it.'}
+        </p>
+      </div>
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button className="btn primary" onClick={openSearch}>Find a title</button>
+        <Link to="/upcoming" className="btn">See what's coming up</Link>
+        {recent.length > 0 && <button className="btn ghost" onClick={onShowFinished}>Show finished</button>}
+      </div>
+    </section>
+  );
+}
+
 export function Downloads() {
   const toast = useToast();
   const { data, error, reload, setData } = useAsync(() => api.downloads(), []);
@@ -120,7 +146,8 @@ export function Downloads() {
     done: jobs.filter((job) => job.status === 'completed'),
     stopped: jobs.filter((job) => job.status === 'failed' || job.status === 'cancelled')
   };
-  const tab: Tab = chosen ?? (groups.active.length ? 'active' : groups.stopped.length ? 'stopped' : 'done');
+  // With nothing running, In progress shows what finished lately; failures still come first.
+  const tab: Tab = chosen ?? (groups.active.length ? 'active' : groups.stopped.some((job) => job.status === 'failed') ? 'stopped' : 'active');
   const visible = groups[tab].filter((job) => !query || job.title.toLowerCase().includes(query.toLowerCase()));
   const rate = groups.active.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0);
 
@@ -144,10 +171,9 @@ export function Downloads() {
       </div>
       {error && <ErrorNote message={error} onRetry={reload} />}
       {!data && !error && <Loading />}
-      {data && !visible.length && (
-        <Empty title={query ? 'No downloads match' : tab === 'active' ? 'Nothing downloading' : tab === 'done' ? 'Nothing finished yet' : 'No problems'}>
-          {tab === 'active' && !query ? <>Find a show on <Link to="/" style={{ textDecoration: 'underline' }}>Home</Link> and download a season or an episode.</> : null}
-        </Empty>
+      {data && !visible.length && tab === 'active' && !query && <Idle jobs={data.jobs} onShowFinished={() => setChosen('done')} />}
+      {data && !visible.length && (tab !== 'active' || query) && (
+        <Empty title={query ? 'No downloads match' : tab === 'done' ? 'Nothing finished yet' : 'No problems'} />
       )}
       {visible.length > 0 && (
         <div className="table job-table">

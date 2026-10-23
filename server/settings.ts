@@ -8,6 +8,8 @@ interface StoredSettings extends Omit<Settings, 'passwordSet'> {
   passwordHash: string;
   sessionSecret: string;
   streamSecret: string;
+  /** Private part of the calendar feed address. */
+  calendarToken: string;
 }
 
 export const MASK = '••••••••';
@@ -41,6 +43,7 @@ function defaults(options: ServerOptions): StoredSettings {
     },
     downloads: {
       concurrentFiles: 3,
+      connections: 4,
       removeFromTorbox: false,
       subtitles: true,
       episodeTitles: true,
@@ -65,7 +68,8 @@ function defaults(options: ServerOptions): StoredSettings {
     },
     passwordHash: '',
     sessionSecret: randomToken(32),
-    streamSecret: randomToken(32)
+    streamSecret: randomToken(32),
+    calendarToken: randomToken(18)
   };
 }
 
@@ -111,6 +115,7 @@ export class SettingsService {
     data.library = { ...base.library, ...data.library };
     data.notifications = { ...base.notifications, ...data.notifications };
     if (!data.torboxApiKey && options.defaults.torboxApiKey) data.torboxApiKey = options.defaults.torboxApiKey;
+    data.calendarToken ||= randomToken(18);
     this.file.flush();
   }
 
@@ -123,7 +128,7 @@ export class SettingsService {
   }
 
   publicView(): Settings {
-    const { passwordHash, sessionSecret: _session, streamSecret: _stream, ...rest } = this.file.data;
+    const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, ...rest } = this.file.data;
     const key = rest.torboxApiKey;
     return {
       ...rest,
@@ -163,6 +168,7 @@ export class SettingsService {
     if (patch.downloads) {
       const downloads = patch.downloads;
       if (downloads.concurrentFiles !== undefined) data.downloads.concurrentFiles = clampNumber(downloads.concurrentFiles, 1, 10, 3);
+      if (downloads.connections !== undefined) data.downloads.connections = clampNumber(downloads.connections, 1, 8, 4);
       for (const key of ['removeFromTorbox', 'subtitles', 'episodeTitles', 'qualityInName'] as const) {
         if (typeof downloads[key] === 'boolean') data.downloads[key] = downloads[key]!;
       }
@@ -198,6 +204,11 @@ export class SettingsService {
 
   regenerateAddonToken(): void {
     this.file.data.addon.token = randomToken(18);
+    this.file.flush();
+  }
+
+  regenerateCalendarToken(): void {
+    this.file.data.calendarToken = randomToken(18);
     this.file.flush();
   }
 

@@ -71,7 +71,7 @@ function createWindow() {
     height: 880,
     minWidth: 380,
     minHeight: 560,
-    backgroundColor: '#0f0f0d',
+    backgroundColor: '#000000',
     title: 'Haul',
     icon: path.join(__dirname, 'icon.png'),
     autoHideMenuBar: true,
