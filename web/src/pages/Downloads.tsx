@@ -4,7 +4,8 @@ import type { Job } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Figure, Loading, Menu, type MenuAction, TabBar, join } from '../components/ui';
 import { Link, ago, bytes, duration, speed, useAsync, usePolling, useToast } from '../lib';
-import { useOpenSearch } from '../shell';
+import { useOpenSearch, useService } from '../shell';
+import { SERVICE_NAMES } from '../../../shared/services';
 
 type Tab = 'active' | 'done' | 'stopped';
 
@@ -28,7 +29,10 @@ function progressOf(job: Job): { value: number; remote: boolean } {
 function StatusPill({ job }: { job: Job }) {
   switch (job.status) {
     case 'queued': return <span className="pill">Waiting</span>;
-    case 'torbox': return <span className="pill">{job.torbox.state === 'Queued on TorBox' ? 'TorBox queue' : 'At TorBox'}</span>;
+    case 'torbox': {
+      const name = SERVICE_NAMES[job.torbox.service ?? 'torbox'];
+      return <span className="pill">{job.torbox.state?.startsWith('Queued on') ? `${name} queue` : `At ${name}`}</span>;
+    }
     case 'downloading': return <span className="pill transfer">Downloading</span>;
     case 'paused': return <span className="pill warning">Paused</span>;
     case 'completed': return <span className="pill positive">In library</span>;
@@ -39,6 +43,7 @@ function StatusPill({ job }: { job: Job }) {
 
 function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
   const toast = useToast();
+  const active = useService().name;
   const [open, setOpen] = useState(false);
   const run = async (action: () => Promise<unknown>, done?: string) => {
     try { await action(); onChange(); if (done) toast(done); } catch (error) { toast((error as Error).message, 'error'); }
@@ -48,8 +53,9 @@ function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
   const { total, done, videos, videosDone } = sizes(job);
   const left = job.status === 'downloading' && job.speed > 0 ? (total - done) / job.speed : job.status === 'torbox' ? job.torbox.eta ?? 0 : 0;
   const rate = job.status === 'downloading' ? job.speed : job.status === 'torbox' ? job.torbox.speed ?? 0 : 0;
-  const detail = job.status === 'torbox' ? `TorBox is fetching the torrent` : job.status === 'downloading' ? `${videosDone} of ${videos} file${videos === 1 ? '' : 's'} · ${bytes(done)} of ${bytes(total)}`
-    : job.status === 'completed' ? `Finished ${ago(job.completedAt)} · ${bytes(total)}` : job.status === 'queued' ? job.note ?? 'Waiting to send to TorBox' : '';
+  const service = SERVICE_NAMES[job.torbox.service ?? 'torbox'];
+  const detail = job.status === 'torbox' ? `${service} is fetching the torrent` : job.status === 'downloading' ? `${videosDone} of ${videos} file${videos === 1 ? '' : 's'} · ${bytes(done)} of ${bytes(total)}`
+    : job.status === 'completed' ? `Finished ${ago(job.completedAt)} · ${bytes(total)}` : job.status === 'queued' ? job.note ?? `Waiting to send to ${active}` : '';
 
   const actions: Array<MenuAction | 'separator'> = [];
   if (job.status === 'queued' || job.status === 'torbox' || job.status === 'downloading') actions.push({ label: 'Pause', onSelect: () => run(() => api.jobAction(job.id, 'pause')) });
@@ -110,6 +116,7 @@ function JobRow({ job, onChange }: { job: Job; onChange: () => void }) {
 
 /** In progress, with nothing running: what happened lately and where to go next. */
 function Idle({ jobs, onShowFinished }: { jobs: Job[]; onShowFinished: () => void }) {
+  const service = useService().name;
   const openSearch = useOpenSearch();
   const week = Date.now() - 7 * 86_400_000;
   const recent = jobs.filter((job) => job.status === 'completed' && (job.completedAt ?? 0) > week);
@@ -121,7 +128,7 @@ function Idle({ jobs, onShowFinished }: { jobs: Job[]; onShowFinished: () => voi
         <p className="muted">
           {recent.length
             ? <>{recent.length} download{recent.length === 1 ? '' : 's'} finished this week, {bytes(size)} in all. The latest was {recent[0]!.title}{recent[0]!.label ? `, ${recent[0]!.label}` : ''}.</>
-            : 'Pick a show or a movie and it lands here while TorBox and Haul fetch it.'}
+            : `Pick a show or a movie and it lands here while ${service} and Haul fetch it.`}
         </p>
       </div>
       <div className="row" style={{ flexWrap: 'wrap' }}>
@@ -134,6 +141,7 @@ function Idle({ jobs, onShowFinished }: { jobs: Job[]; onShowFinished: () => voi
 }
 
 export function Downloads() {
+  const service = useService().name;
   const toast = useToast();
   const { data, error, reload, setData } = useAsync(() => api.downloads(), []);
   const [chosen, setChosen] = useState<Tab | null>(null);
@@ -156,7 +164,7 @@ export function Downloads() {
       <div className="title-row">
         <div>
           <h1>Downloads</h1>
-          <div className="sub">{groups.active.length ? <>{groups.active.length} in progress{rate ? <> · <span style={{ color: 'var(--accent)' }}>{speed(rate)}</span></> : null}</> : 'TorBox fetches each torrent; Haul then downloads the files to this machine.'}</div>
+          <div className="sub">{groups.active.length ? <>{groups.active.length} in progress{rate ? <> · <span style={{ color: 'var(--accent)' }}>{speed(rate)}</span></> : null}</> : `${service} fetches each torrent; Haul then downloads the files to this machine.`}</div>
         </div>
         {groups.done.length > 0 && <button className="btn" onClick={async () => { await api.clearFinished(); reload(); toast('Finished downloads cleared from the list'); }}>Clear finished</button>}
       </div>

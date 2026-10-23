@@ -1,21 +1,23 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import type { LibraryFile, MediaType, Meta, PlayCaps, PlaySession, PlaySubtitle, Release, WatchProgress } from '../shared/types.js';
 import type * as catalog from './catalog.js';
 import { type Context, HttpError, type Router, sendFile } from './http.js';
 import type { Library } from './library.js';
 import { type Caps, HlsJobs, type MediaTools, type Probe, chooseMode, defaultAudio, languageName, srtToVtt, trackLabel, videoPlays } from './media.js';
 import { type ProgressStore, isFinished, progressKey } from './progress.js';
-import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile } from './release.js';
+import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile, parseRelease } from './release.js';
 import type { SearchService } from './search.js';
-import { type Torbox, TorboxError, type TorboxStream, type TorboxTorrent, magnetFor } from './torbox.js';
+import { type Debrid, DebridError, type DebridFile, type DebridTorrent, type ServiceStream, type Services } from './debrid.js';
+import { magnetFor } from './torbox.js';
 
 interface Deps {
   library: Library;
   catalog: typeof catalog;
   search: SearchService;
-  torbox: Torbox;
+  debrid: Services;
   media: MediaTools;
   /** The watching of whoever this browser is (profiles). */
   progress: (ctx: Context) => ProgressStore;
@@ -89,12 +91,34 @@ function capsFrom(value: unknown): Caps {
   return { hevc: caps.hevc === true, av1: caps.av1 === true, ac3: caps.ac3 === true };
 }
 
-interface LocalSession { kind: 'local'; file: LibraryFile; probe: Probe | null; caps: Caps; audio: number; at: number }
-interface TorboxSession { kind: 'torbox'; torrentId: number; fileId: number; upstream: string; audio: number; subtitle: number | null; at: number }
+/** A file Haul plays itself: one on this machine, or (remote) a debrid service's link to one. */
+interface LocalSession { kind: 'local'; file: LibraryFile; probe: Probe | null; caps: Caps; audio: number; at: number; remote?: boolean }
+interface TorboxSession { kind: 'torbox'; torrentId: number | string; fileId: number; upstream: string; audio: number; subtitle: number | null; at: number }
 
-/** Haul's own player: your files, or straight from TorBox. */
+/** What pressing play found on the debrid service: TorBox's own stream, or a link Haul plays itself. */
+type ServiceFind =
+  | { kind: 'torbox'; name: string; torrent: DebridTorrent; target: DebridFile; stream: ServiceStream; audio: number; subtitle: number | null }
+  | { kind: 'remote'; name: string; torrent: DebridTorrent; target: DebridFile; link: string; service: Debrid };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Passes a byte range of a debrid link through to the browser (links stay on the server). */
+async function proxyRemote(ctx: Context, url: string): Promise<void> {
+  const controller = new AbortController();
+  ctx.req.on('close', () => controller.abort());
+  const upstream = await fetch(url, { headers: { ...(ctx.req.headers.range ? { Range: String(ctx.req.headers.range) } : {}), 'User-Agent': 'Haul/1.0' }, signal: controller.signal })
+    .catch((error: Error) => { throw new HttpError(502, `The service didn't send the video: ${error.message}`); });
+  if (!upstream.ok && upstream.status !== 206) throw new HttpError(502, `The service didn't send the video (${upstream.status}). Press play again.`);
+  const headers: Record<string, string> = { 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream' };
+  for (const name of ['content-length', 'content-range']) { const value = upstream.headers.get(name); if (value) headers[name] = value; }
+  ctx.res.writeHead(upstream.status, headers);
+  if (ctx.req.method === 'HEAD' || !upstream.body) { ctx.res.end(); controller.abort(); return; }
+  Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream).on('error', () => ctx.res.destroy()).pipe(ctx.res);
+}
+
+/** Haul's own player: your files, straight from TorBox, or another service's files played through here. */
 export function registerPlay(router: Router, deps: Deps): HlsJobs {
-  const { library, torbox, media, progress } = deps;
+  const { library, debrid, media, progress } = deps;
   const hls = new HlsJobs(media);
   const sessions = new Map<string, LocalSession | TorboxSession>();
   const remember = (session: LocalSession | TorboxSession) => {
@@ -116,49 +140,85 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     return files.sort((a, b) => b.size - a.size)[0];
   };
 
-  // --- TorBox lookups, cached so pressing play costs as few round trips as possible ---
-  let torrentList: { at: number; value: Promise<TorboxTorrent[]> } | null = null;
-  /** The TorBox list, at most a minute old unless `fresh`. */
-  const torrents = (fresh = false): Promise<TorboxTorrent[]> => {
-    if (!fresh && torrentList && Date.now() - torrentList.at < 60_000) return torrentList.value;
-    const value = torbox.list();
-    torrentList = { at: Date.now(), value };
-    value.catch(() => { if (torrentList?.value === value) torrentList = null; });
+  // --- Service lookups, cached so pressing play costs as few round trips as possible ---
+  const torrentLists = new Map<string, { at: number; value: Promise<DebridTorrent[]> }>();
+  /** The service's list, at most a minute old unless `fresh`. */
+  const torrents = (fresh = false): Promise<DebridTorrent[]> => {
+    const service = debrid.active;
+    const known = torrentLists.get(service.id);
+    if (!fresh && known && Date.now() - known.at < 60_000) return known.value;
+    const value = service.list();
+    torrentLists.set(service.id, { at: Date.now(), value });
+    value.catch(() => { if (torrentLists.get(service.id)?.value === value) torrentLists.delete(service.id); });
     return value;
   };
-  const findTorrent = (list: TorboxTorrent[], hash: string) => list.find((torrent) => torrent.hash?.toLowerCase() === hash || torrent.alternative_hashes?.some((value) => value.toLowerCase() === hash));
-  const isReady = (torrent?: TorboxTorrent) => Boolean(torrent && torrent.files?.length && (torrent.download_present || torrent.download_finished));
+  const findTorrent = (list: DebridTorrent[], hash: string) => list.find((torrent) => torrent.hash?.toLowerCase() === hash || torrent.alternative_hashes?.some((value) => value.toLowerCase() === hash));
+  const isReady = (torrent?: DebridTorrent) => Boolean(torrent && torrent.files?.length && (torrent.download_present || torrent.download_finished));
 
-  /** The torrent in the TorBox list, adding it (cached ones are ready at once) if it isn't there and `add` allows. */
-  const torrentFor = async (pick: { hash: string; name: string; cached: boolean }, add = true): Promise<TorboxTorrent> => {
+  /**
+   * The torrent in the service's list, adding it (cached ones are ready at once) if it isn't there and
+   * `add` allows. With `wait`, gives up sooner: for services that can't say what's cached, a version
+   * that isn't ready in a few seconds isn't cached.
+   */
+  const torrentFor = async (pick: { hash: string; name: string; cached: boolean }, add = true, wait = 30_000): Promise<DebridTorrent> => {
+    const service = debrid.active;
     let torrent = findTorrent(await torrents(), pick.hash);
     // The cached list may predate it, or predate it finishing.
     if (!torrent) torrent = findTorrent(await torrents(true), pick.hash);
     let id = torrent?.id;
     if (!torrent) {
-      if (!add) throw new HttpError(409, 'Not in the TorBox list');
-      if (!pick.cached) throw new HttpError(409, "TorBox doesn't have this version yet. Download it, or pick one marked Ready now.");
-      id = (await torbox.create(magnetFor(pick.hash, pick.name), pick.name)).torrentId;
-      torrentList = null;
+      if (!add) throw new HttpError(409, `Not in the ${service.name} list`);
+      if (!pick.cached && service.checksCache) throw new HttpError(409, `${service.name} doesn't have this version yet. Download it, or pick one marked Ready now.`);
+      id = (await service.create(magnetFor(pick.hash, pick.name), pick.name)).torrentId;
+      torrentLists.delete(service.id);
     }
     // Waiting for it to be ready: one torrent by id is several times quicker than the whole list.
-    for (let waited = 0; !isReady(torrent) && waited < 30_000; waited += 600) {
-      if (torrent && /error|failed/i.test(torrent.download_state)) throw new HttpError(502, `TorBox reported: ${torrent.download_state}`);
-      if (torrent || id !== undefined) await new Promise((resolve) => setTimeout(resolve, 600));
-      torrent = id !== undefined ? await torbox.torrent(id).catch(() => undefined) : findTorrent(await torrents(true), pick.hash);
+    for (let waited = 0; !isReady(torrent) && waited < wait; waited += 600) {
+      if (torrent && /error|failed/i.test(torrent.download_state)) throw new HttpError(502, `${service.name} reported: ${torrent.download_state}`);
+      if (torrent || id !== undefined) await sleep(600);
+      torrent = id !== undefined ? await service.torrent(id).catch(() => undefined) : findTorrent(await torrents(true), pick.hash);
     }
-    if (!torrent || !isReady(torrent)) throw new HttpError(504, 'TorBox is still preparing this torrent. Try again in a moment.');
+    if (!torrent || !isReady(torrent)) throw new HttpError(504, `${service.name} is still preparing this torrent. Try again in a moment.`);
     return torrent;
   };
 
+  /**
+   * For services that can't say what's cached (Real-Debrid, AllDebrid): add the best versions one at a
+   * time and keep the first that's ready within a few seconds. One that isn't is removed again, so it
+   * doesn't sit downloading in the account.
+   */
+  const firstReady = async (options: Release[]): Promise<{ pick: Release; torrent: DebridTorrent }> => {
+    const service = debrid.active;
+    for (const option of options.slice(0, 3)) {
+      const listed = findTorrent(await torrents(), option.hash);
+      let id = listed?.id;
+      let added = false;
+      if (id === undefined) {
+        id = (await service.create(magnetFor(option.hash, option.name), option.name)).torrentId;
+        added = true;
+        torrentLists.delete(service.id);
+      }
+      if (id === undefined) continue;
+      let torrent: DebridTorrent | undefined;
+      for (let waited = 0; waited <= 8000; waited += 1000) {
+        torrent = await service.torrent(id).catch(() => undefined);
+        if (isReady(torrent) || (torrent && /error|failed/i.test(torrent.download_state))) break;
+        await sleep(1000);
+      }
+      if (torrent && isReady(torrent)) return { pick: option, torrent };
+      if (added) await service.remove(id).catch(() => undefined);
+    }
+    throw new HttpError(404, `${service.name} doesn't have a ready version of this yet. Download one instead; it plays from your library once it's in.`);
+  };
+
   /** Streams TorBox made in the last hour, reused for the same file and tracks instead of asking again. */
-  const streamCache = new Map<string, { at: number; value: Promise<TorboxStream> }>();
-  const streamFor = (torrentId: number, fileId: number, audio = 0, subtitle: number | null = null, fresh = false): Promise<TorboxStream> => {
+  const streamCache = new Map<string, { at: number; value: Promise<ServiceStream> }>();
+  const streamFor = (torrentId: number | string, fileId: number, audio = 0, subtitle: number | null = null, fresh = false): Promise<ServiceStream> => {
     const key = `${torrentId}:${fileId}:${audio}:${subtitle}`;
     for (const [entry, value] of streamCache) if (Date.now() - value.at > HOUR) streamCache.delete(entry);
     const hit = streamCache.get(key);
     if (hit && !fresh) return hit.value;
-    const value = torbox.createStream(torrentId, fileId, { audio, subtitle });
+    const value = debrid.get('torbox').createStream!(torrentId, fileId, { audio, subtitle });
     streamCache.set(key, { at: Date.now(), value });
     value.catch(() => { if (streamCache.get(key)?.value === value) streamCache.delete(key); });
     return value;
@@ -223,7 +283,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     }).catch(() => undefined);
   };
 
-  const pickFile = (torrent: TorboxTorrent, type: MediaType, season?: number, episode?: number) => {
+  const pickFile = (torrent: DebridTorrent, type: MediaType, season?: number, episode?: number) => {
     const videos = torrent.files.filter((file) => VIDEO_EXTENSIONS.has(extensionOf(file.name)) && !isExtraFile(file.name, file.size));
     if (type === 'series') {
       const match = videos.filter((file) => {
@@ -238,24 +298,32 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     return videos.sort((a, b) => b.size - a.size)[0];
   };
 
-  /** The best version TorBox can start right away. */
-  const bestCached = async (type: MediaType, imdbId: string, season?: number, episode?: number): Promise<Release> => {
+  /**
+   * Versions to start right away, best first: the ones the service has cached, or (for a service that
+   * can't say) the best few to try.
+   */
+  const candidates = async (type: MediaType, imdbId: string, season?: number, episode?: number): Promise<Release[]> => {
+    const service = debrid.active;
     const releases = type === 'movie' ? await deps.search.movie(imdbId) : await deps.search.episode(imdbId, season!, episode!);
-    const ready = releases.filter((release) => release.cached && release.score > 0 && !release.info.lowQuality);
+    const usable = releases.filter((release) => (release.cached || !service.checksCache) && release.score > 0 && !release.info.lowQuality);
     // English releases first, dubs last; within a tier, a single file before a pack, then the usual order.
     const single = (release: Release) => (release.kind === 'movie' || release.kind === 'episode' ? 0 : 1);
-    const best = ready.map((release, order) => ({ release, order }))
-      .sort((a, b) => languageTier(a.release.info) - languageTier(b.release.info) || single(a.release) - single(b.release) || a.order - b.order)[0]?.release;
-    if (!best) throw new HttpError(404, 'Nothing is ready on TorBox for this one yet. Download it, or check back later.');
-    return best;
+    const ordered = usable.map((release, order) => ({ release, order }))
+      .sort((a, b) => languageTier(a.release.info) - languageTier(b.release.info) || single(a.release) - single(b.release) || a.order - b.order)
+      .map((entry) => entry.release);
+    if (!ordered.length) throw new HttpError(404, service.checksCache ? `Nothing is ready on ${service.name} for this one yet. Download it, or check back later.` : 'No versions of this were found. Download it, or check back later.');
+    return ordered;
   };
 
   /**
-   * The release, torrent, file and stream for one title. A version already in the TorBox list needs no
-   * search at all; otherwise the best version TorBox has cached is found and added.
+   * The release, torrent and file for one title, and how to play it: TorBox's own stream, or the
+   * service's link played through this server. A version already in the service's list needs no
+   * search at all; otherwise the best version the service has ready is found and added.
    */
-  const resolveTorbox = async (type: MediaType, imdbId: string, season?: number, episode?: number, hash?: string, add = true, wants: Wants = {}) => {
+  const resolveService = async (type: MediaType, imdbId: string, season?: number, episode?: number, hash?: string, add = true, wants: Wants = {}): Promise<ServiceFind> => {
+    const service = debrid.active;
     let pick: { hash: string; name: string; cached: boolean };
+    let torrent: DebridTorrent;
     if (hash) {
       const listed = findTorrent(await torrents(), hash);
       if (listed) pick = { hash, name: listed.name, cached: true };
@@ -266,8 +334,9 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
         if (!found) throw new HttpError(404, 'That version is no longer listed. Pick another.');
         pick = found;
       }
+      torrent = await torrentFor(pick, add);
     } else {
-      // A good version already in the TorBox list beats a better one TorBox would have to add.
+      // A good version already in the service's list beats a better one it would have to add.
       const [list, releases, packs] = await Promise.all([
         torrents(),
         type === 'movie' ? deps.search.movie(imdbId) : deps.search.episode(imdbId, season!, episode!),
@@ -276,34 +345,53 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       const usable = (release: Release) => release.score > 0 && !release.info.lowQuality && !isForeignOnly(release.info);
       const owned = [...releases, ...packs].filter((release) => usable(release) && isReady(findTorrent(list, release.hash)))
         .sort((a, b) => languageTier(a.info) - languageTier(b.info));
-      pick = owned[0] ?? await bestCached(type, imdbId, season, episode);
+      if (owned[0]) {
+        pick = owned[0];
+        torrent = await torrentFor(pick, add);
+      } else if (service.checksCache) {
+        pick = (await candidates(type, imdbId, season, episode))[0]!;
+        torrent = await torrentFor(pick, add);
+      } else {
+        if (!add) throw new HttpError(409, `Nothing in the ${service.name} list yet`);
+        ({ pick, torrent } = await firstReady(await candidates(type, imdbId, season, episode)));
+      }
     }
-    const torrent = await torrentFor(pick, add);
     const target = pickFile(torrent, type, season, episode);
     if (!target) throw new HttpError(404, `This torrent has no file for S${pad(season!)}E${pad(episode!)}.`);
-    let stream = await streamFor(torrent.id, target.id).catch((error: Error) => {
-      throw new HttpError(502, error instanceof TorboxError && /plan|pro|subscri/i.test(error.message) ? 'Streaming from TorBox needs a TorBox Pro plan.' : `TorBox couldn't start the stream: ${error.message}`);
-    });
-    // Starts in the language you last listened in (English unless you've picked another), when the
-    // release's first track is something else, and with your usual subtitles burned in.
-    const audios = stream.metadata?.audios ?? [];
-    const wantedAudio = wants.audio ?? 'English';
-    const spoken = trackFor(audios, wantedAudio);
-    let audio = 0;
-    if (spoken > 0 && languageName(audios[0]?.language) !== wantedAudio) {
-      const switched = await streamFor(torrent.id, target.id, spoken).catch(() => null);
-      if (switched) { stream = switched; audio = spoken; }
+
+    if (service.createStream) {
+      try {
+        let stream = await streamFor(torrent.id, target.id);
+        // Starts in the language you last listened in (English unless you've picked another), when the
+        // release's first track is something else, and with your usual subtitles burned in.
+        const audios = stream.metadata?.audios ?? [];
+        const wantedAudio = wants.audio ?? 'English';
+        const spoken = trackFor(audios, wantedAudio);
+        let audio = 0;
+        if (spoken > 0 && languageName(audios[0]?.language) !== wantedAudio) {
+          const switched = await streamFor(torrent.id, target.id, spoken).catch(() => null);
+          if (switched) { stream = switched; audio = spoken; }
+        }
+        let subtitle: number | null = null;
+        const written = trackFor(stream.metadata?.subtitles ?? [], wants.subtitles);
+        if (written >= 0) {
+          const withSubtitles = await streamFor(torrent.id, target.id, audio, written).catch(() => null);
+          if (withSubtitles) { stream = withSubtitles; subtitle = written; }
+        }
+        return { kind: 'torbox', name: pick.name, torrent, target, stream, audio, subtitle };
+      } catch (error) {
+        // Without TorBox's streaming (it's on paid plans), Haul plays the file itself if it can convert.
+        const planOnly = error instanceof DebridError && /plan|pro|subscri/i.test(error.message);
+        if (!planOnly || !await media.hasFfmpeg()) {
+          throw new HttpError(502, planOnly ? `Streaming from ${service.name} needs a plan with streaming.` : `${service.name} couldn't start the stream: ${(error as Error).message}`);
+        }
+      }
     }
-    let subtitle: number | null = null;
-    const written = trackFor(stream.metadata?.subtitles ?? [], wants.subtitles);
-    if (written >= 0) {
-      const withSubtitles = await streamFor(torrent.id, target.id, audio, written).catch(() => null);
-      if (withSubtitles) { stream = withSubtitles; subtitle = written; }
-    }
-    return { name: pick.name, torrent, target, stream, audio, subtitle };
+    const link = await service.downloadLink(torrent.id, target.id).catch((error: Error) => { throw new HttpError(502, `${service.name} didn't give a link to the file: ${error.message}`); });
+    return { kind: 'remote', name: pick.name, torrent, target, link, service };
   };
 
-  const torboxSubtitles = (stream: TorboxStream): PlaySubtitle[] => (stream.metadata?.subtitles ?? []).map((entry, position) => ({
+  const torboxSubtitles = (stream: ServiceStream): PlaySubtitle[] => (stream.metadata?.subtitles ?? []).map((entry, position) => ({
     id: `tb:${position}`,
     label: trackLabel({ index: position, language: entry.language, title: entry.title ?? undefined }, 'subtitle'),
     language: languageName(entry.language)
@@ -322,10 +410,10 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     const hash = body.hash ? String(body.hash).toLowerCase() : undefined;
     const file = body.source === 'torbox' || hash ? undefined : localFile(type, imdbId, season, episode);
     const local = Boolean(file && fs.existsSync(file.path));
-    // The title's details and the TorBox side are fetched at the same time.
+    // The title's details and the debrid side are fetched at the same time.
     const metaLoad = deps.catalog.meta(type, imdbId);
-    const torboxLoad = local ? null : torbox.configured ? resolveTorbox(type, imdbId, season, episode, hash, true, wants) : null;
-    torboxLoad?.catch(() => undefined);
+    const serviceLoad = local ? null : debrid.configured ? resolveService(type, imdbId, season, episode, hash, true, wants) : null;
+    serviceLoad?.catch(() => undefined);
     const meta = await metaLoad;
     const entry = type === 'series' ? meta.episodes.find((item) => item.season === season && item.episode === episode) : undefined;
     const key = progressKey(type, imdbId, season, episode);
@@ -339,21 +427,23 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       next: type === 'series' ? nextEpisode(meta, season!, episode!) : undefined
     };
 
-    if (file && local) {
+    /** A file Haul plays itself: yours, or (remote) a debrid service's link to one. */
+    const fileSession = async (file: LibraryFile, remote?: { service: string; name: string }): Promise<PlaySession> => {
       const canConvert = await media.hasFfmpeg();
       const probe = canConvert ? await media.probe(file.path).catch(() => null) : null;
       const spoken = probe ? trackFor(probe.audios, wants.audio) : -1;
       const audio = probe ? (spoken >= 0 ? probe.audios[spoken]!.index : defaultAudio(probe)) : 0;
-      const mode = chooseMode(file.path, probe, caps, audio, canConvert);
-      const id = remember({ kind: 'local', file, probe, caps, audio, at: Date.now() });
+      const mode = chooseMode(remote ? remote.name : file.path, probe, caps, audio, canConvert);
+      const id = remember({ kind: 'local', file, probe, caps, audio, at: Date.now(), remote: Boolean(remote) });
       const sidecars = file.subtitles.map((subtitle, index) => ({ id: `s${index}`, label: `${trackLabel({ index, language: subtitle.lang }, 'subtitle')} (file)`, url: `/api/play/local/${id}/subtitle/s${index}.vtt`, language: languageName(subtitle.lang), forced: /forced/i.test(path.basename(subtitle.path)) }));
       const embedded = (probe?.subtitles ?? []).filter((subtitle) => subtitle.text).map((subtitle) => ({ id: `e${subtitle.index}`, label: trackLabel(subtitle, 'subtitle'), url: `/api/play/local/${id}/subtitle/e${subtitle.index}.vtt`, language: languageName(subtitle.language), forced: subtitle.forced, title: subtitle.title }));
       const choices = [...sidecars, ...embedded];
       const subtitles: PlaySubtitle[] = choices.map(({ id: choice, label, url, language }) => ({ id: choice, label, url, language }));
       const chosen = trackFor(choices, wants.subtitles);
-      const session: PlaySession = {
+      return {
         ...base,
-        kind: 'local',
+        kind: remote ? 'remote' : 'local',
+        service: remote?.service,
         url: mode === 'direct' ? `/api/play/local/${id}/file` : `/api/play/local/${id}/{start}/{audio}/playlist.m3u8`,
         mode: mode === 'direct' ? 'direct' : 'stream',
         converting: mode === 'transcode' || (probe ? !videoPlays(probe, caps) : false),
@@ -362,14 +452,34 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
         audio,
         subtitles,
         chosenSubtitle: chosen >= 0 ? subtitles[chosen]!.id : undefined,
-        source: path.basename(file.path),
+        source: remote ? remote.name : path.basename(file.path),
         stream: id
       };
-      return ctx.json(200, session);
-    }
+    };
 
-    if (!torboxLoad) throw new HttpError(400, 'Add your TorBox API key in Settings to stream.');
-    const { name, torrent, target, stream, audio, subtitle } = await torboxLoad;
+    if (file && local) return ctx.json(200, await fileSession(file));
+
+    if (!serviceLoad) throw new HttpError(400, `Add your ${debrid.name} API key in Settings to stream.`);
+    const found = await serviceLoad;
+    if (found.kind === 'remote') {
+      const { target, link, service, name } = found;
+      const parsed = parseEpisodeFile(target.name);
+      const remoteFile: LibraryFile = {
+        id: 'remote',
+        path: link,
+        relative: target.name,
+        size: target.size,
+        mtime: 0,
+        addedAt: 0,
+        season: parsed?.season,
+        episode: parsed?.episode,
+        resolution: parseRelease(target.name).resolution,
+        tags: [],
+        subtitles: []
+      };
+      return ctx.json(200, await fileSession(remoteFile, { service: service.name, name: name || path.basename(target.name) }));
+    }
+    const { name, torrent, target, stream, audio, subtitle } = found;
     warmStream(stream.hls_url, base.resume ?? 0);
     const id = remember({ kind: 'torbox', torrentId: torrent.id, fileId: target.id, upstream: stream.hls_url, audio, subtitle, at: Date.now() });
     const intro = stream.intro_information;
@@ -391,8 +501,8 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
   });
 
   /**
-   * Warms up what pressing play needs: the search and the TorBox list when a title opens, and the stream
-   * itself (only for versions already in the TorBox list, so nothing is added) when the pointer is on Play.
+   * Warms up what pressing play needs: the search and the service's list when a title opens, and the stream
+   * itself (only for versions already in that list, so nothing is added) when the pointer is on Play.
    */
   const prepared = new Map<string, number>();
   router.post('/api/play/prepare', async (ctx) => {
@@ -404,19 +514,23 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     if (!/^tt\d+$/.test(imdbId) || (type === 'series' && (!Number.isInteger(season) || !Number.isInteger(episode)))) throw new HttpError(400, 'Unknown title');
     const key = `${progressKey(type, imdbId, season, episode)}:${body.stream ? 'stream' : 'search'}`;
     for (const [entry, at] of prepared) if (Date.now() - at > 10 * 60_000) prepared.delete(entry);
-    if (Date.now() - (prepared.get(key) ?? 0) > 60_000 && torbox.configured && !localFile(type, imdbId, season, episode)) {
+    if (Date.now() - (prepared.get(key) ?? 0) > 60_000 && debrid.configured && !localFile(type, imdbId, season, episode)) {
       prepared.set(key, Date.now());
-      // resolveTorbox warms the list and the search on its way; it stops short of adding a torrent.
+      // resolveService warms the list and the search on its way; it stops short of adding a torrent.
       const work = body.stream
-        ? resolveTorbox(type, imdbId, season, episode, undefined, false, wantsFrom(body)).then((found) => warmStream(found.stream.hls_url, progress(ctx).resumeAt(progressKey(type, imdbId, season, episode)) ?? 0))
-        : Promise.all([torrents(), deps.catalog.meta(type, imdbId), bestCached(type, imdbId, season, episode)]);
+        ? resolveService(type, imdbId, season, episode, undefined, false, wantsFrom(body)).then((found) => { if (found.kind === 'torbox') warmStream(found.stream.hls_url, progress(ctx).resumeAt(progressKey(type, imdbId, season, episode)) ?? 0); })
+        : Promise.all([torrents(), deps.catalog.meta(type, imdbId), candidates(type, imdbId, season, episode)]);
       work.catch(() => undefined);
     }
     ctx.json(200, { ok: true });
   });
 
   // --- Your files ---------------------------------------------------------------
-  router.get('/api/play/local/:id/file', (ctx) => sendFile(ctx, sessionOf(ctx.params.id!, 'local').file.path));
+  router.get('/api/play/local/:id/file', async (ctx) => {
+    const session = sessionOf(ctx.params.id!, 'local');
+    if (session.remote) return proxyRemote(ctx, session.file.path);
+    sendFile(ctx, session.file.path);
+  });
 
   router.get('/api/play/local/:id/:start/:audio/:name', async (ctx) => {
     const session = sessionOf(ctx.params.id!, 'local');
@@ -501,7 +615,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     ctx.json(200, { url: `/api/play/torbox/${ctx.params.id}/playlist.m3u8?v=${Date.now()}`, audio, subtitle });
   });
 
-  router.get('/api/play/info', async (ctx) => ctx.json(200, { ffmpeg: await media.hasFfmpeg(), torbox: torbox.configured }));
+  router.get('/api/play/info', async (ctx) => ctx.json(200, { ffmpeg: await media.hasFfmpeg(), torbox: debrid.configured, service: debrid.name, convertsItself: Boolean(debrid.createStream) }));
 
   // --- Progress ---------------------------------------------------------------------
   router.post('/api/progress', async (ctx) => {

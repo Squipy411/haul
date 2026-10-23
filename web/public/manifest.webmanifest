@@ -1,7 +1,7 @@
 {
-  "name": "Haul · TorBox player",
+  "name": "Haul",
   "short_name": "Haul",
-  "description": "Your own streaming site: stream and download films and shows through TorBox, and play your own files from anywhere.",
+  "description": "Your own streaming site: stream and download films and shows through TorBox, Real-Debrid, AllDebrid or Premiumize, and play your own files from anywhere.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -54,8 +54,14 @@ export interface Release {
   score: number;
 }
 
+export type DebridService = 'torbox' | 'realdebrid' | 'alldebrid' | 'premiumize';
+
 export interface Settings {
+  /** Which service fetches torrents and streams them. */
+  debridService: DebridService;
   torboxApiKey: string;
+  /** Keys for the other services; masked like the TorBox key when read back. */
+  debridKeys: Record<Exclude<DebridService, 'torbox'>, string>;
   moviesDir: string;
   tvDir: string;
   incompleteDir: string;
@@ -120,7 +126,8 @@ export interface Settings {
   twoFactor: boolean;
 }
 
-export type SettingsPatch = Partial<Omit<Settings, 'passwordSet' | 'twoFactor' | 'sources' | 'quality' | 'downloads' | 'addon' | 'library' | 'notifications'>> & {
+export type SettingsPatch = Partial<Omit<Settings, 'passwordSet' | 'twoFactor' | 'sources' | 'quality' | 'downloads' | 'addon' | 'library' | 'notifications' | 'debridKeys'>> & {
+  debridKeys?: Partial<Settings['debridKeys']>;
   sources?: Partial<Settings['sources']>;
   quality?: Partial<Settings['quality']>;
   downloads?: Partial<Settings['downloads']>;
@@ -146,6 +153,8 @@ export interface Status {
   passwordSet: boolean;
   canRemovePassword: boolean;
   setupComplete: boolean;
+  /** The debrid service in use, and whether it has a key (the field keeps its first name). */
+  service: { id: DebridService; name: string; checksCache: boolean };
   torboxConfigured: boolean;
   /** TorBox refused the saved key the last time Haul used it (reset or expired). */
   torboxRefused?: boolean;
@@ -265,6 +274,8 @@ export interface ScheduleItem {
 
 export interface SetupRequest {
   password?: string;
+  /** Which service the key is for (TorBox if left out). */
+  service?: DebridService;
   torboxApiKey: string;
   moviesDir?: string;
   tvDir?: string;
@@ -354,8 +365,11 @@ export interface Job {
   status: JobStatus;
   resumeTo?: JobStatus;
   note?: string;
+  /** The torrent on the debrid service (named for TorBox, the first one Haul supported). */
   torbox: {
-    id?: number;
+    /** Which service has it; older downloads without one were TorBox. */
+    service?: DebridService;
+    id?: number | string;
     queuedId?: number;
     state?: string;
     progress?: number;
@@ -466,8 +480,10 @@ export interface PlaySubtitle { id: string; label: string; url?: string; languag
 export interface PlayCaps { hevc: boolean; av1: boolean; ac3: boolean }
 
 export interface PlaySession {
-  /** local: a file on this server. torbox: streamed from TorBox, which converts it for the browser. */
-  kind: 'local' | 'torbox';
+  /** local: a file on this server. torbox: streamed from TorBox, which converts it for the browser. remote: a file on another debrid service, played through this server like a local one. */
+  kind: 'local' | 'torbox' | 'remote';
+  /** For remote: the service's name ("Real-Debrid"). */
+  service?: string;
   /** Progress key: "movie:tt…" or "series:tt…:S:E". */
   key: string;
   type: MediaType;

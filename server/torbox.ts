@@ -1,12 +1,7 @@
 import type { PackFile, TorboxAccount } from '../shared/types.js';
+import { type CachedTorrent, type Debrid, DebridError, type DebridTorrent, type ServiceStream } from './debrid.js';
 
 const API = 'https://api.torbox.app/v1/api';
-
-export class TorboxError extends Error {
-  constructor(message: string, readonly code?: string, readonly status?: number, readonly retryAfter?: number) {
-    super(message);
-  }
-}
 
 export interface TorboxFile {
   id: number;
@@ -16,31 +11,6 @@ export interface TorboxFile {
   mimetype?: string;
 }
 
-export interface TorboxTorrent {
-  id: number;
-  hash: string;
-  name: string;
-  size: number;
-  active: boolean;
-  download_state: string;
-  download_finished: boolean;
-  download_present: boolean;
-  progress: number;
-  download_speed: number;
-  eta: number;
-  seeds: number;
-  cached: boolean;
-  files: TorboxFile[];
-  alternative_hashes?: string[];
-}
-
-export interface CachedTorrent {
-  name: string;
-  size: number;
-  hash: string;
-  files: PackFile[];
-}
-
 interface Envelope<T> {
   success: boolean;
   error?: string | null;
@@ -48,22 +18,13 @@ interface Envelope<T> {
   data: T;
 }
 
-export interface TorboxStream {
-  hls_url: string;
-  needs_transcoding?: boolean;
-  audio_index?: number;
-  subtitle_index?: number | string | null;
-  intro_information?: { start_time?: number; end_time?: number } | null;
-  metadata?: {
-    video?: { codec?: string; width?: number; height?: number; duration?: string };
-    audios?: Array<{ index: number; codec?: string; language?: string; language_full?: string; title?: string | null; channels?: number }>;
-    subtitles?: Array<{ index: number; codec?: string; language?: string; language_full?: string; title?: string | null }>;
-  };
-}
-
 const PLANS: Record<number, string> = { 0: 'Free', 1: 'Essential', 2: 'Pro', 3: 'Standard' };
 
-export class Torbox {
+export class Torbox implements Debrid {
+  readonly id = 'torbox' as const;
+  readonly name = 'TorBox';
+  readonly checksCache = true;
+
   constructor(private readonly key: () => string) {}
 
   get configured(): boolean {
@@ -78,7 +39,7 @@ export class Torbox {
 
   private async call<T>(pathname: string, init: RequestInit & { query?: Record<string, string | number | boolean | undefined> } = {}, keyOverride?: string): Promise<T> {
     const key = keyOverride ?? this.key();
-    if (!key) throw new TorboxError('Add your TorBox API key in Settings first.', 'NO_KEY');
+    if (!key) throw new DebridError('Add your TorBox API key in Settings first.', 'NO_KEY');
     const url = new URL(`${API}${pathname}`);
     for (const [name, value] of Object.entries(init.query || {})) if (value !== undefined) url.searchParams.set(name, String(value));
     let response: Response;
@@ -89,25 +50,25 @@ export class Torbox {
         signal: AbortSignal.timeout(30_000)
       });
     } catch (error) {
-      throw new TorboxError(`Could not reach TorBox: ${(error as Error).message}`, 'NETWORK');
+      throw new DebridError(`Could not reach TorBox: ${(error as Error).message}`, 'NETWORK');
     }
     if (response.status === 429) {
       const retry = Number(response.headers.get('retry-after')) || 60;
-      throw new TorboxError('TorBox rate limit reached. Haul will retry shortly.', 'RATE_LIMIT', 429, retry);
+      throw new DebridError('TorBox rate limit reached. Haul will retry shortly.', 'RATE_LIMIT', 429, retry);
     }
     let body: Envelope<T>;
     try {
       body = await response.json() as Envelope<T>;
     } catch {
-      throw new TorboxError(`TorBox returned HTTP ${response.status}.`, 'BAD_RESPONSE', response.status);
+      throw new DebridError(`TorBox returned HTTP ${response.status}.`, 'BAD_RESPONSE', response.status);
     }
     if (!response.ok || !body.success) {
       // TorBox's own wording ("log in again or reset your token") is about its website, not Haul.
       if (response.status === 401 || /token|auth/i.test(`${body.error ?? ''} ${body.detail ?? ''}`)) {
         if (!keyOverride) this.refusedKey = key;
-        throw new TorboxError("TorBox didn't accept your API key. It may have been reset: copy it again from torbox.app/settings and paste it in Haul's Settings.", 'BAD_KEY', response.status);
+        throw new DebridError("TorBox didn't accept your API key. It may have been reset: copy it again from torbox.app/settings and paste it in Haul's Settings.", 'BAD_KEY', response.status);
       }
-      throw new TorboxError(body.detail || body.error || `TorBox returned HTTP ${response.status}.`, body.error || undefined, response.status);
+      throw new DebridError(body.detail || body.error || `TorBox returned HTTP ${response.status}.`, body.error || undefined, response.status);
     }
     if (this.refusedKey === key) this.refusedKey = null;
     return body.data;
@@ -118,7 +79,7 @@ export class Torbox {
       const user = await this.call<{ email?: string; plan?: number; premium_expires_at?: string | null }>('/user/me', {}, keyOverride);
       return { ok: true, email: user.email, plan: PLANS[user.plan ?? -1] ?? `Plan ${user.plan}`, expires: user.premium_expires_at ?? null };
     } catch (error) {
-      const failure = error as TorboxError;
+      const failure = error as DebridError;
       return { ok: false, error: failure.code === 'BAD_KEY' ? "TorBox didn't accept that API key. Copy it again from torbox.app/settings, under API key, and paste it here." : failure.message };
     }
   }
@@ -164,9 +125,9 @@ export class Torbox {
   private listPages = 1;
 
   /** Every torrent in the account. TorBox pages at 1000; big accounts take a few requests, made together. */
-  async list(): Promise<TorboxTorrent[]> {
+  async list(): Promise<DebridTorrent[]> {
     const page = async (index: number) => {
-      const data = await this.call<TorboxTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, limit: 1000, offset: index * 1000 } });
+      const data = await this.call<DebridTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, limit: 1000, offset: index * 1000 } });
       return Array.isArray(data) ? data : [];
     };
     const pages = await Promise.all(Array.from({ length: this.listPages }, (_, index) => page(index)));
@@ -178,17 +139,17 @@ export class Torbox {
   }
 
   /** One torrent by id: much quicker than the whole list when waiting for a new one to be ready. */
-  async torrent(id: number): Promise<TorboxTorrent | undefined> {
-    const data = await this.call<TorboxTorrent | TorboxTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, id } });
+  async torrent(id: number | string): Promise<DebridTorrent | undefined> {
+    const data = await this.call<DebridTorrent | DebridTorrent[] | null>('/torrents/mylist', { query: { bypass_cache: true, id } });
     return Array.isArray(data) ? data[0] : data ?? undefined;
   }
 
-  async downloadLink(torrentId: number, fileId: number): Promise<string> {
+  async downloadLink(torrentId: number | string, fileId: number): Promise<string> {
     const key = this.key();
     const url = await this.call<string>('/torrents/requestdl', {
       query: { token: key, torrent_id: torrentId, file_id: fileId, zip_link: false, redirect: false }
     });
-    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) throw new TorboxError('TorBox did not return a download link.', 'NO_LINK');
+    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) throw new DebridError('TorBox did not return a download link.', 'NO_LINK');
     return url;
   }
 
@@ -196,8 +157,8 @@ export class Torbox {
    * A browser-ready HLS stream of one file. TorBox converts it on its servers and burns in the chosen
    * subtitle. The returned hls_url carries the API key, so it must never reach the browser.
    */
-  async createStream(torrentId: number, fileId: number, choice: { audio?: number; subtitle?: number | null } = {}): Promise<TorboxStream> {
-    return this.call<TorboxStream>('/stream/createstream', {
+  async createStream(torrentId: number | string, fileId: number, choice: { audio?: number; subtitle?: number | null } = {}): Promise<ServiceStream> {
+    return this.call<ServiceStream>('/stream/createstream', {
       query: {
         id: torrentId,
         file_id: fileId,
@@ -209,7 +170,7 @@ export class Torbox {
     });
   }
 
-  async remove(torrentId: number): Promise<void> {
+  async remove(torrentId: number | string): Promise<void> {
     await this.call('/torrents/controltorrent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

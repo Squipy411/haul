@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
+import { SERVICE_INFO, SERVICE_NAMES } from '../../../shared/services';
+import type { DebridService } from '../../../shared/types';
 import { api } from '../api';
+import { ServicePicker } from '../components/ServicePicker';
 import { Mark } from '../components/ui';
 import { useToast } from '../lib';
 
 export function Setup({ createPassword, onDone }: { createPassword: boolean; onDone: () => void }) {
   const toast = useToast();
+  const [service, setService] = useState<DebridService>('torbox');
   const [apiKey, setApiKey] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -23,7 +27,7 @@ export function Setup({ createPassword, onDone }: { createPassword: boolean; onD
     if (createPassword && password !== confirm) return setError('The two passwords are different.');
     setBusy(true);
     try {
-      await api.setup({ torboxApiKey: apiKey.trim(), moviesDir, tvDir, password: createPassword ? password : undefined });
+      await api.setup({ service, torboxApiKey: apiKey.trim(), moviesDir, tvDir, password: createPassword ? password : undefined });
       const broken = (await api.checkFolders()).results.filter((folder) => !folder.ok);
       if (broken.length) toast(`Haul can't save to ${broken.map((folder) => folder.dir).join(', ')}. Fix the folder permissions, then check Settings.`, 'error');
       onDone();
@@ -37,9 +41,9 @@ export function Setup({ createPassword, onDone }: { createPassword: boolean; onD
   return (
     <div className="gate">
       <form className="gate-card" onSubmit={(event) => { event.preventDefault(); void finish(); }}>
-        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></div>
-        <h1>{createPassword ? 'Set up Haul' : 'Connect TorBox'}</h1>
-        <p>Haul plays films and shows straight from your TorBox account, and downloads the ones you want to keep, named for Plex, Jellyfin and Nuvio.</p>
+        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>Stream &amp; download</small></span></div>
+        <h1>{createPassword ? 'Set up Haul' : 'Connect your service'}</h1>
+        <p>Haul is your own streaming site. It plays films and shows straight from a debrid service (TorBox, Real-Debrid, AllDebrid or Premiumize), plays your own files, and downloads the ones you want to keep, named for Plex, Jellyfin and Nuvio.</p>
         {createPassword && (
           <div className="panel">
             <div className="two">
@@ -50,9 +54,13 @@ export function Setup({ createPassword, onDone }: { createPassword: boolean; onD
         )}
         <div className="panel">
           <div className="field">
-            <label htmlFor="setup-key">TorBox API key</label>
+            <span className="field-label">Your debrid service</span>
+            <ServicePicker value={service} onChange={(next) => { setService(next); setApiKey(''); }} />
+          </div>
+          <div className="field">
+            <label htmlFor="setup-key">{SERVICE_NAMES[service]} API key</label>
             <input id="setup-key" className="input code" type="password" autoComplete="off" autoFocus={!createPassword} value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
-            <span className="hint">Find it at <a href="https://torbox.app/settings" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>torbox.app/settings</a>. It stays on this machine.</span>
+            <span className="hint">Find it at <a href={SERVICE_INFO[service].keyUrl} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>{SERVICE_INFO[service].keyPage}</a>. It stays on this machine.</span>
           </div>
           <div className="two">
             <div className="field"><label htmlFor="setup-movies">Movies folder</label><input id="setup-movies" className="input code" value={moviesDir} onChange={(event) => setMoviesDir(event.target.value)} /></div>

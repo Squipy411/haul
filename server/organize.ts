@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Job, JobFile, Resolution } from '../shared/types.js';
 import { SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS, extensionOf, isExtraFile, parseEpisodeFile, subtitleLanguage } from './release.js';
-import type { TorboxFile } from './torbox.js';
+import type { DebridFile } from './debrid.js';
 
 export interface NamingOptions {
   moviesDir: string;
@@ -72,9 +72,9 @@ function episodeBase(job: Job, naming: NamingOptions, season: number, episode: n
   return { dir, base: safeName(`${showTitle} - ${code}${titlePart}${quality}`) };
 }
 
-const isVideo = (file: TorboxFile) => VIDEO_EXTENSIONS.has(extensionOf(file.name));
+const isVideo = (file: DebridFile) => VIDEO_EXTENSIONS.has(extensionOf(file.name));
 
-function makeFile(file: TorboxFile, target: string, kind: JobFile['kind'], extra: Partial<JobFile> = {}): JobFile {
+function makeFile(file: DebridFile, target: string, kind: JobFile['kind'], extra: Partial<JobFile> = {}): JobFile {
   return {
     key: `${file.id}`,
     torboxFileId: file.id,
@@ -89,7 +89,7 @@ function makeFile(file: TorboxFile, target: string, kind: JobFile['kind'], extra
   };
 }
 
-function subtitleFor(video: TorboxFile, files: TorboxFile[], episodeCode?: string): Array<{ file: TorboxFile; lang: string }> {
+function subtitleFor(video: DebridFile, files: DebridFile[], episodeCode?: string): Array<{ file: DebridFile; lang: string }> {
   const stem = (video.short_name || video.name.split('/').pop() || '').replace(/\.[a-z0-9]{2,4}$/i, '').toLowerCase();
   const subtitles = files.filter((file) => SUBTITLE_EXTENSIONS.has(extensionOf(file.name)) && extensionOf(file.name) === 'srt');
   const related = subtitles.filter((file) => {
@@ -98,7 +98,7 @@ function subtitleFor(video: TorboxFile, files: TorboxFile[], episodeCode?: strin
     if (episodeCode && lower.includes(episodeCode.toLowerCase())) return true;
     return !episodeCode && subtitles.length <= 6;
   });
-  const picked = new Map<string, { file: TorboxFile; lang: string }>();
+  const picked = new Map<string, { file: DebridFile; lang: string }>();
   for (const file of related) {
     const lang = subtitleLanguage(file.name) ?? (related.length === 1 ? 'en' : null);
     if (!lang || lang !== 'en') continue;
@@ -109,8 +109,8 @@ function subtitleFor(video: TorboxFile, files: TorboxFile[], episodeCode?: strin
   return [...picked.values()];
 }
 
-/** Chooses which TorBox files a job needs and where each one goes. */
-export function planFiles(job: Job, files: TorboxFile[], naming: NamingOptions): JobFile[] {
+/** Chooses which of the torrent's files a job needs and where each one goes. */
+export function planFiles(job: Job, files: DebridFile[], naming: NamingOptions): JobFile[] {
   const videos = files.filter((file) => isVideo(file) && !isExtraFile(file.name, file.size));
   const result: JobFile[] = [];
   const used = new Set<string>();
@@ -120,7 +120,7 @@ export function planFiles(job: Job, files: TorboxFile[], naming: NamingOptions):
     used.add(candidate);
     return candidate;
   };
-  const addSubtitles = (video: TorboxFile, dir: string, base: string, code?: string) => {
+  const addSubtitles = (video: DebridFile, dir: string, base: string, code?: string) => {
     if (!naming.subtitles) return;
     for (const { file, lang } of subtitleFor(video, files, code)) {
       result.push(makeFile(file, unique(dir, `${base}.${lang}`, 'srt'), 'subtitle'));
@@ -139,7 +139,7 @@ export function planFiles(job: Job, files: TorboxFile[], naming: NamingOptions):
   }
 
   const wanted = new Set(job.episodes ?? []);
-  const chosen = new Map<string, { file: TorboxFile; season: number; episode: number; episodeEnd?: number }>();
+  const chosen = new Map<string, { file: DebridFile; season: number; episode: number; episodeEnd?: number }>();
   for (const file of videos) {
     const parsed = parseEpisodeFile(file.name);
     if (!parsed) continue;

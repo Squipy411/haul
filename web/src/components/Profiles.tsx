@@ -30,7 +30,7 @@ export function ProfilePicker({ profiles }: { profiles: Profile[] }) {
   return (
     <div className="gate">
       <div className="profile-picker">
-        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></div>
+        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>Stream &amp; download</small></span></div>
         <h1>Who's watching?</h1>
         <div className="profile-grid">
           {profiles.map((profile) => (

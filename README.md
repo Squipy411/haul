@@ -1,12 +1,12 @@
-# Haul · TorBox player
+# Haul
 
 <img src="web/public/icon.png" width="56" align="right" alt="" />
 
-Your own streaming site, self-hosted. Press play on any film or episode and Haul streams it straight from your [TorBox](https://torbox.app) account, or plays your own copy if you have one: from your downloads, a second drive, a NAS share, or a video you dragged onto the page. Open it in a browser at home or, with a free Cloudflare link, from anywhere. When you want to keep something, pick a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your machine, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
+Your own streaming site, self-hosted. Press play on any film or episode and Haul streams it straight from your debrid account ([TorBox](https://torbox.app), [Real-Debrid](https://real-debrid.com), [AllDebrid](https://alldebrid.com) or [Premiumize](https://www.premiumize.me)), or plays your own copy if you have one: from your downloads, a second drive, a NAS share, or a video you dragged onto the page. Open it in a browser at home or, with a free Cloudflare link, from anywhere. When you want to keep something, pick a season pack or let Haul assemble the whole season episode by episode, and the files arrive on your machine, named the way Plex, Jellyfin and Nuvio expect. It also serves your library to Nuvio and Stremio as an addon.
 
 It replaces a Sonarr + Radarr + Seerr + download-client stack for people who just want to choose what to download. Nothing is torrented on your own machine: TorBox fetches the torrent, Haul pulls the finished files over HTTPS.
 
-You need a TorBox account and either Docker or a Windows PC.
+You need an account with one of those services and either Docker or a Windows PC.
 
 ![Home](docs/screenshots/discover.jpg)
 
@@ -27,7 +27,7 @@ You need a TorBox account and either Docker or a Windows PC.
 - **Follow a show or a film** and get a phone notification the moment a torrent for the next episode is out, not just when it airs. Optionally let Haul download it right away.
 - **Wait for one exact version.** Following a film that isn't on digital yet? Tell Haul you only want, say, a 4K WEB-DL. It ignores cams, rips and everything else, and grabs the first 4K WEB-DL the moment one appears.
 - **See what's coming** on the Upcoming page: new episodes of everything you follow or own, from last week to six weeks ahead, with whether a torrent is out yet.
-- **Track progress** through TorBox → your machine → library, with pause, retry and cancel.
+- **Track progress** through your debrid service → your machine → library, with pause, retry and cancel.
 - **Fast downloads.** Big files come down over several connections at once (TorBox limits each one), resume exactly where they stopped, and a stalled connection is retried instead of hanging. Haul checks there's disk space before each file and shows what's free in the sidebar.
 - **On your phone:** add Haul to your home screen, get notifications through ntfy, and subscribe your calendar to the Upcoming schedule.
 - **Watch in Nuvio or Stremio**: your library appears as catalogs, and anything you own gets a "Haul" stream played straight from disk with seeking. Folders you had before Haul are picked up too. If Haul can't tell what a folder is, My library marks it **Needs a match**: search for the title, or paste its IMDb link.
@@ -71,7 +71,7 @@ docker run -d --name haul --restart unless-stopped -p 60700:60700 \
   ghcr.io/squipy411/haul:latest
 ```
 
-Or use [docker-compose.yml](docker-compose.yml). Then open `http://<server-ip>:60700`, create a password and paste your TorBox API key.
+Or use [docker-compose.yml](docker-compose.yml). Then open `http://<server-ip>:60700`, create a password, pick your debrid service and paste its API key.
 
 - `/media` is your media folder; Haul writes to `Movies/` and `TV Shows/` inside it (changeable in Settings).
 - `PUID`/`PGID` make new files belong to your user (run `id` on the host to find them). Leave them out to run as root.
@@ -113,7 +113,7 @@ Every film and episode has a play button. Haul picks the source:
 - **Your file**, if it's in your library. MP4 and WebM play as they are. MKV, x265/HEVC, 10-bit, DTS and TrueHD files are rewrapped or converted on the fly by ffmpeg (included in the Docker image; on Windows, install ffmpeg to get this). 4K that the browser can't play is converted to 1080p.
 - **Streamed from TorBox** otherwise: the best version marked Ready now, or the exact version you pick with ▶ in a version list. TorBox converts it on its servers, so every format plays, and burns in the subtitle you choose. Streaming needs a **TorBox Pro** plan. Streaming a version adds it to your TorBox list, as downloading does.
 
-Your TorBox API key never reaches the browser: Haul fetches TorBox's playlists itself and hands the player links that only open that one stream.
+Your debrid API key never reaches the browser: Haul fetches TorBox's playlists itself, passes other services' files through, and hands the player links that only open that one stream.
 
 TorBox needs a few seconds to start converting a file it hasn't streamed before, so Haul starts that work early: when a title page opens, when you point at Play, and before an episode ends for the next one. Only versions already in your TorBox list are started this way, so browsing never adds anything to your account. Pressing play on something you've streamed in the last hour reuses the same stream and starts in under a second. When Haul picks a version for you, it prefers English releases and starts on the English audio track when there's a choice.
 
@@ -214,6 +214,19 @@ Away from home, Nuvio can use the same address: open Settings → Nuvio and Stre
 - Haul serves plain HTTP. To use it from outside your home network, use [an HTTPS tunnel](#use-haul-from-anywhere) or a VPN rather than forwarding the port. Never use `HAUL_AUTH=none` on an address the internet can reach.
 
 Found a problem? Open an issue, or for anything sensitive, contact the maintainer privately through GitHub.
+
+## Debrid services
+
+Pick one in setup or in Settings → Debrid service. You can switch later; downloads already started finish on the service they began on.
+
+| | Says what's ready before you pick | Streaming in the browser |
+| --- | --- | --- |
+| **TorBox** | Yes ("Ready now") | Converted on TorBox's servers (plans with streaming); otherwise played through ffmpeg on your server |
+| **Premiumize** | Yes | Played through ffmpeg on your server: as it is when the browser can, converted when it can't |
+| **Real-Debrid** | No: Haul tries the best few versions and keeps the first that's ready in seconds, removing the others | Same as Premiumize |
+| **AllDebrid** | No: same as Real-Debrid | Same as Premiumize |
+
+The Docker image includes ffmpeg. Downloads to your library work the same with every service.
 
 ## Sources
 

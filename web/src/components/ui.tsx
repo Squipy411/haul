@@ -7,7 +7,7 @@ import { rememberPreview } from '../api';
 import { hoverPreviews } from './HoverPreview';
 import { Link } from '../lib';
 
-/** The product's mark: a box opening onto a play button, for a TorBox player. */
+/** The product's mark: a box opening onto a play button. */
 /** An open box with a play button rising out of it: what you fetch, ready to watch. */
 export function Mark({ size = 20 }: { size?: number }) {
   return (

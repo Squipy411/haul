@@ -7,7 +7,7 @@ import { optionsFromEnv } from '../server/config';
 import { JobManager } from '../server/jobs';
 import { parseRelease } from '../server/release';
 import { SettingsService } from '../server/settings';
-import { type Torbox, TorboxError } from '../server/torbox';
+import { type Debrid, DebridError, Services } from '../server/debrid';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
@@ -18,9 +18,12 @@ function setup() {
   const options = optionsFromEnv({ dataDir, defaults: { torboxApiKey: '', moviesDir: path.join(dataDir, 'm'), tvDir: path.join(dataDir, 't'), incompleteDir: path.join(dataDir, 'i'), publicUrl: '' } });
   const settings = new SettingsService(options);
   const remove = vi.fn(async () => undefined);
-  const torbox = { configured: false, remove } as unknown as Torbox;
-  const jobs = new JobManager({ options, settings, torbox, onCompleted: () => undefined });
-  return { jobs, remove };
+  const removeElsewhere = vi.fn(async () => undefined);
+  const torbox = { id: 'torbox', name: 'TorBox', configured: false, remove } as unknown as Debrid;
+  const realdebrid = { id: 'realdebrid', name: 'Real-Debrid', configured: false, remove: removeElsewhere } as unknown as Debrid;
+  const debrid = new Services(() => settings.value.debridService, { torbox, realdebrid, alldebrid: torbox, premiumize: torbox });
+  const jobs = new JobManager({ options, settings, debrid, onCompleted: () => undefined });
+  return { jobs, remove, removeElsewhere, settings, torbox };
 }
 
 const meta: Meta = { id: 'tt0903747', type: 'series', name: 'Breaking Bad', year: 2008, seasons: [1], episodes: [1, 2].map((episode) => ({ id: `tt0903747:1:${episode}`, season: 1, episode, title: `E${episode}` })) };
@@ -43,6 +46,18 @@ describe('shared TorBox torrents', () => {
     jobs.stop();
   });
 
+  it('finishes a download on the service it was started on, after switching to another', async () => {
+    const { jobs, remove, removeElsewhere, settings } = setup();
+    settings.update({ debridService: 'realdebrid' });
+    const job = jobs.create({ meta, release, season: 1 });
+    Object.assign(job, { status: 'torbox', torbox: { service: 'realdebrid', id: 'RDID', createdByHaul: true } });
+    settings.update({ debridService: 'torbox' });
+    await jobs.cancel(job.id);
+    expect(removeElsewhere).toHaveBeenCalledWith('RDID');
+    expect(remove).not.toHaveBeenCalled();
+    jobs.stop();
+  });
+
   it('retry re-reads the torrent from TorBox instead of reusing stale links', () => {
     const { jobs } = setup();
     const job = jobs.create({ meta, release, season: 1 });
@@ -59,11 +74,11 @@ describe('shared TorBox torrents', () => {
 
 describe('a refused TorBox key', () => {
   it('waits for a working key instead of failing the download', async () => {
-    const { jobs } = setup();
-    const refused = new TorboxError("TorBox didn't accept your API key.", 'BAD_KEY', 403);
-    Object.assign((jobs as unknown as { deps: { torbox: Torbox } }).deps.torbox, { list: vi.fn(async () => { throw refused; }) });
+    const { jobs, torbox } = setup();
+    const refused = new DebridError("TorBox didn't accept your API key.", 'BAD_KEY', 403);
+    Object.assign(torbox, { list: vi.fn(async () => { throw refused; }) });
     const job = jobs.create({ meta, release, season: 1 });
-    await (jobs as unknown as { addToTorbox: (job: unknown) => Promise<void> }).addToTorbox(job);
+    await (jobs as unknown as { addToService: (job: unknown) => Promise<void> }).addToService(job);
     expect(job.status).toBe('queued');
     expect(job.note).toContain("didn't accept");
     expect(job.nextAttemptAt).toBeGreaterThan(Date.now());

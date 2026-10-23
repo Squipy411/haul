@@ -8,7 +8,7 @@ RUN npm test && npm run build
 
 FROM node:22-alpine
 LABEL org.opencontainers.image.title="Haul" \
-      org.opencontainers.image.description="Self-hosted streaming site for your TorBox account and your own media: watch in the browser, download to your library, share over the internet" \
+      org.opencontainers.image.description="Self-hosted streaming site for your debrid account (TorBox, Real-Debrid, AllDebrid, Premiumize) and your own media: watch in the browser, download to your library, share over the internet" \
       org.opencontainers.image.source="https://github.com/Squipy411/haul" \
       org.opencontainers.image.licenses="MIT"
 # ffmpeg lets the player convert files a browser can't play (x265, DTS, TrueHD, MKV on Safari).

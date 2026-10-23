@@ -2,6 +2,7 @@ import { Check, Play } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Release, ReleaseInfo } from '../../../shared/types';
 import { bytes, episodeRange } from '../lib';
+import { useService } from '../shell';
 import { Picker, Tip } from './ui';
 
 const RES: Record<string, string> = { '2160p': '4K', '1080p': '1080p', '720p': '720p', '480p': 'SD', unknown: '' };
@@ -50,9 +51,12 @@ export function sizeOf(release: Release): string {
 }
 
 export function Availability({ cached }: { cached: boolean }) {
+  const service = useService();
+  // Real-Debrid and AllDebrid can't say in advance; pressing play finds out.
+  if (!service.checksCache) return <Tip text={`${service.name} can't say in advance whether it has this. Press play to try it.`}><span className="pill">Try it</span></Tip>;
   return cached
-    ? <Tip text="TorBox already has this, so it starts right away"><span className="pill positive">Ready now</span></Tip>
-    : <Tip text="TorBox downloads the torrent first, then Haul fetches the files"><span className="pill">Fetch first</span></Tip>;
+    ? <Tip text={`${service.name} already has this, so it starts right away`}><span className="pill positive">Ready now</span></Tip>
+    : <Tip text={`${service.name} downloads the torrent first, then Haul fetches the files`}><span className="pill">Fetch first</span></Tip>;
 }
 
 type Filter = 'all' | '2160p' | '1080p' | '720p';
@@ -76,7 +80,7 @@ function bytesOf(release: Release): number {
 export function ReleaseTable({ releases, onDownload, onStream, season, emptyText, compact }: {
   releases: Release[];
   onDownload: (release: Release) => Promise<boolean>;
-  /** Watch a version now, streamed from TorBox. Only versions TorBox already has can start at once. */
+  /** Watch a version now, from the debrid service. Only versions it already has can start at once. */
   onStream?: (release: Release) => void;
   season?: number;
   emptyText?: string;
@@ -84,6 +88,7 @@ export function ReleaseTable({ releases, onDownload, onStream, season, emptyText
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [readyOnly, setReadyOnly] = useState(false);
+  const service = useService();
   const [limit, setLimit] = useState(compact ? 5 : 15);
   const [busy, setBusy] = useState<string | null>(null);
   const [queued, setQueued] = useState<Set<string>>(new Set());
@@ -132,7 +137,7 @@ export function ReleaseTable({ releases, onDownload, onStream, season, emptyText
         <Picker label="Sort versions" value={sort} onChange={setSort} options={[{ value: 'size', label: 'Largest first' }, { value: 'match', label: 'Best match first' }, { value: 'seeders', label: 'Most seeders first' }]} />
       </div>
       <div className="table rel-table">
-        <div className="thead"><span>Version</span><span className="r hide-sm">Size</span><span className="r hide-sm">Seeders</span><span className="hide-sm">TorBox</span><span /></div>
+        <div className="thead"><span>Version</span><span className="r hide-sm">Size</span><span className="r hide-sm">Seeders</span><span className="hide-sm">{service.name}</span><span /></div>
         {visible.slice(0, limit).map((release, index) => {
           const best = release.hash === bestHash;
           const isQueued = queued.has(release.hash);
@@ -150,15 +155,15 @@ export function ReleaseTable({ releases, onDownload, onStream, season, emptyText
                 <div className="mobile-line">
                   <span>{sizeOf(release)}</span>
                   {release.seeders !== undefined && <span>{release.seeders} seeders</span>}
-                  <span style={{ color: release.cached ? 'var(--positive)' : undefined }}>{release.cached ? 'Ready now' : 'Fetch first'}</span>
+                  {service.checksCache && <span style={{ color: release.cached ? 'var(--positive)' : undefined }}>{release.cached ? 'Ready now' : 'Fetch first'}</span>}
                 </div>
               </div>
               <span className="r num hide-sm">{sizeOf(release)}</span>
               <span className="r num muted hide-sm">{release.seeders ?? '–'}</span>
               <span className="hide-sm"><Availability cached={release.cached} /></span>
               <div className="row release-actions">
-                {onStream && release.cached && (
-                  <Tip text="Watch now, streamed from TorBox">
+                {onStream && (release.cached || !service.checksCache) && (
+                  <Tip text={service.checksCache ? `Watch now, streamed from ${service.name}` : `Try watching it now from ${service.name}`}>
                     <button className="btn sm icon" onClick={() => onStream(release)} aria-label={`Stream ${release.name}`}><Play size={14} fill="currentColor" /></button>
                   </Tip>
                 )}

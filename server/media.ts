@@ -38,10 +38,9 @@ export class MediaTools {
     return this.available;
   }
 
-  /** ffprobe, cached per file and modification time. */
+  /** ffprobe, cached per file and modification time (a link from a debrid service, per link). */
   async probe(file: string): Promise<Probe> {
-    const stat = await fsp.stat(file);
-    const key = `${file}:${stat.mtimeMs}`;
+    const key = isRemote(file) ? file : `${file}:${(await fsp.stat(file)).mtimeMs}`;
     let entry = this.probes.get(key);
     if (!entry) {
       if (this.probes.size > 500) this.probes.clear();
@@ -54,10 +53,10 @@ export class MediaTools {
 
   private runProbe(file: string): Promise<any> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(this.ffprobe, ['-v', 'error', ...remoteInput(file), '-print_format', 'json', '-show_format', '-show_streams', file], { stdio: ['ignore', 'pipe', 'pipe'] });
       const chunks: Buffer[] = [];
       let errors = '';
-      const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+      const timer = setTimeout(() => child.kill('SIGKILL'), isRemote(file) ? 45_000 : 30_000);
       child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
       child.stderr.on('data', (chunk: Buffer) => { errors += chunk.toString(); });
       child.on('error', (error) => { clearTimeout(timer); reject(error); });
@@ -77,7 +76,7 @@ export class MediaTools {
   /** One embedded text subtitle track as WebVTT. */
   extractSubtitle(file: string, index: number): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file, '-map', `0:s:${index}`, '-f', 'webvtt', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(this.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', ...remoteInput(file), '-i', file, '-map', `0:s:${index}`, '-f', 'webvtt', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] });
       const chunks: Buffer[] = [];
       let errors = '';
       const timer = setTimeout(() => child.kill('SIGKILL'), 120_000);
@@ -150,8 +149,17 @@ export function defaultAudio(probe: Probe): number {
  * first audio track is the one wanted); anything else is rewrapped, and video the browser can't
  * decode is converted.
  */
-export function chooseMode(file: string, probe: Probe | null, caps: Caps, audio: number, canConvert: boolean): PlayMode {
-  const ext = path.extname(file).toLowerCase();
+/** A file on a debrid service, read over HTTPS, rather than one on this machine. */
+export const isRemote = (file: string) => /^https?:\/\//i.test(file);
+
+/** Reading over the network: carry on through a dropped connection instead of ending the video. */
+export function remoteInput(file: string): string[] {
+  return isRemote(file) ? ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '10'] : [];
+}
+
+/** `name` is the file's name (for a link, the name it had in the torrent): its extension says the container. */
+export function chooseMode(name: string, probe: Probe | null, caps: Caps, audio: number, canConvert: boolean): PlayMode {
+  const ext = path.extname(name).toLowerCase();
   const nativeContainer = ['.mp4', '.m4v', '.webm', '.mov'].includes(ext);
   if (!probe) return nativeContainer || !canConvert ? 'direct' : 'remux';
   if (!canConvert) return 'direct';
@@ -180,7 +188,7 @@ export const SEGMENT_SECONDS = 6;
 export function ffmpegArgs(file: string, { start, audio, mode, probe, caps }: StreamOptions, dir: string): string[] {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   if (start > 0) args.push('-ss', start.toFixed(3));
-  args.push('-i', file, '-map', '0:v:0', '-map', `0:a:${audio}?`);
+  args.push(...remoteInput(file), '-i', file, '-map', '0:v:0', '-map', `0:a:${audio}?`);
   const video = probe?.video;
   if (mode === 'remux') {
     args.push('-c:v', 'copy');

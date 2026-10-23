@@ -1,4 +1,4 @@
-import type { AddonInfo, Follow, FolderListing, FolderStatus, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, RemoteView, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, UploadAdded, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
+import type { AddonInfo, DebridService, Follow, FolderListing, FolderStatus, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, RemoteView, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, UploadAdded, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -101,7 +101,7 @@ export const api = {
   settings: () => request<Settings>('GET', '/api/settings'),
   saveSettings: (patch: SettingsPatch) => request<Settings>('PUT', '/api/settings', patch),
   changePassword: (current: string, next: string | null) => request<{ ok: true }>('POST', '/api/password', { current, next }),
-  testTorbox: (apiKey?: string) => request<TorboxAccount>('POST', '/api/settings/torbox-test', { apiKey }),
+  testTorbox: (apiKey?: string, service?: DebridService) => request<TorboxAccount>('POST', '/api/settings/torbox-test', { apiKey, service }),
   setupDefaults: () => request<{ moviesDir: string; tvDir: string; needsPassword: boolean }>('GET', '/api/setup/defaults'),
   setupTestTorbox: (apiKey: string) => request<TorboxAccount>('POST', '/api/setup/torbox-test', { apiKey }),
   setup: (body: SetupRequest) => request<{ ok: true; account: TorboxAccount }>('POST', '/api/setup', body),

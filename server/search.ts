@@ -1,12 +1,13 @@
 import type { PackFile, Release, ReleaseKind, SeasonPlan, SeasonPlanItem, Settings } from '../shared/types.js';
 import { VIDEO_EXTENSIONS, extensionOf, isExtraFile, isForeignOnly, parseEpisodeFile, parseRelease, resolutionRank } from './release.js';
 import { type RawResult, TORRENTSDB_URL, pirateBaySource, stremioSource, torboxSearch, torznabSource } from './sources.js';
-import type { CachedTorrent, Torbox } from './torbox.js';
+import type { CachedTorrent, Debrid } from './debrid.js';
 
 type Quality = Settings['quality'];
 
 interface SearchDeps {
-  torbox: Torbox;
+  /** The service in use: cache status comes from it. */
+  debrid: Debrid;
   settings: () => Settings & { torboxApiKey: string };
 }
 
@@ -149,8 +150,8 @@ export class SearchService {
     const settings = this.deps.settings();
     const filtered = raws.filter((raw) => !blocked(raw.name, settings.quality.blockedWords));
     let cache = new Map<string, CachedTorrent>();
-    if (this.deps.torbox.configured && filtered.length) {
-      try { cache = await this.deps.torbox.checkCached(filtered.map((raw) => raw.hash)); } catch { /* cache status is a bonus */ }
+    if (this.deps.debrid.configured && this.deps.debrid.checksCache && filtered.length) {
+      try { cache = await this.deps.debrid.checkCached(filtered.map((raw) => raw.hash)); } catch { /* cache status is a bonus */ }
     }
     return filtered.map((raw) => {
       const cachedTorrent = cache.get(raw.hash);

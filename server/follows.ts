@@ -10,6 +10,7 @@ import { isForeignOnly, parseTitleYear, resolutionRank } from './release.js';
 import type { SearchService } from './search.js';
 import type { SettingsService } from './settings.js';
 import { JsonFile } from './store.js';
+import { SERVICE_NAMES } from '../shared/services.js';
 
 interface Deps {
   options: ServerOptions;
@@ -93,6 +94,11 @@ function watches(follow: Follow, season: number, episode: number): boolean {
  * you follow, tells your phone the moment one is out, and can download it straight away.
  */
 export class FollowService {
+  /** The debrid service in use, for notifications. */
+  private get serviceName(): string {
+    return SERVICE_NAMES[this.deps.settings.value.debridService];
+  }
+
   private readonly file: JsonFile<{ follows: Follow[] }>;
   private readonly lastCheck = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
@@ -309,7 +315,7 @@ export class FollowService {
         Object.assign(hit, { downloadedAt: Date.now(), jobId: job.id, release: pick.name, resolution: pick.info.resolution, cached: pick.cached, waitingForBetter: false });
         await this.deps.notifier.send({
           title: `${target.label} is downloading`,
-          message: `${describeRelease(pick.info)}${pick.cached ? ', ready now on TorBox' : ', TorBox is fetching it'}. ${pick.name}`,
+          message: `${describeRelease(pick.info)}${pick.cached ? `, ready now on ${this.serviceName}` : `, ${this.serviceName} is fetching it`}. ${pick.name}`,
           path: target.path,
           priority: 4,
           tags: ['arrow_down']
@@ -334,7 +340,7 @@ export class FollowService {
     if (firstSighting) {
       await this.deps.notifier.send({
         title: strict ? `${target.label} is out in ${describeFilter(follow.want)}` : `${target.label} is available`,
-        message: `${describeRelease(best.info)}${best.cached ? ', ready now on TorBox' : ''}. ${usable.length} matching version${usable.length === 1 ? '' : 's'} found.`,
+        message: `${describeRelease(best.info)}${best.cached ? `, ready now on ${this.serviceName}` : ''}. ${usable.length} matching version${usable.length === 1 ? '' : 's'} found.`,
         path: target.path,
         priority: 4,
         tags: ['tv']

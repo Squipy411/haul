@@ -108,7 +108,7 @@ function NowDownloading({ status }: { status: Status }) {
       <span className="side-download-thumb">{job.poster && <img src={job.poster} alt="" />}</span>
       <span className="side-download-text">
         <span className="row" style={{ gap: 6 }}><b className="truncate grow">{job.title}</b>{more > 0 && <span className="side-download-more num" title={`${more} more downloading`}>+{more}</span>}</span>
-        <span className="faint truncate num">{job.remote ? `At TorBox · ${percent}%` : job.speed > 0 ? `${percent}% · ${speed(job.speed)}` : `${percent}%`}</span>
+        <span className="faint truncate num">{job.remote ? `At ${status.service.name} · ${percent}%` : job.speed > 0 ? `${percent}% · ${speed(job.speed)}` : `${percent}%`}</span>
       </span>
       <span className={`side-download-bar ${job.remote ? 'remote' : ''}`}><i style={{ width: `${percent}%` }} /></span>
     </Link>
@@ -142,7 +142,7 @@ function Sidebar({ status, path }: { status: Status; path: string }) {
   ] as const;
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <Link to="/" className="wordmark" aria-label="Haul, TorBox player"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></Link>
+      <Link to="/" className="wordmark" aria-label="Haul, home"><Mark size={26} /><span className="lockup"><b>Haul</b><small>Stream &amp; download</small></span></Link>
       <nav className="nav" aria-label="Main" ref={nav}>
         {pill && <span className="nav-pill" aria-hidden="true" style={{ transform: `translateY(${pill.top}px)`, height: pill.height }} />}
         {groups.map((group) => (
@@ -285,16 +285,16 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
                     {active} active
                   </Link>
                 )}
-                <div className="switcher" title={status.torboxRefused ? "TorBox didn't accept your API key" : status.torboxConfigured ? 'TorBox account connected' : 'TorBox is not connected'}>
+                <div className="switcher" title={status.torboxRefused ? `${status.service.name} didn't accept your API key` : status.torboxConfigured ? `${status.service.name} account connected` : `${status.service.name} is not connected`}>
                   <span className={`dot ${status.torboxConfigured && !status.torboxRefused ? 'on' : 'off'}`} />
-                  <span className="label">TorBox</span>
+                  <span className="label">{status.service.name}</span>
                 </div>
                 {status.profile && <ProfileMenu profiles={status.profiles} current={status.profile} onManage={() => navigate('/settings#profiles')} />}
               </div>
             </header>
             {status.torboxRefused && !path.startsWith('/settings') && (
               <div className="key-banner notice negative" role="alert">
-                TorBox didn't accept your API key, so streams and downloads can't start. It may have been reset.
+                {status.service.name} didn't accept your API key, so streams and downloads can't start. It may have been reset.
                 <Link to="/settings">Paste a new key in Settings</Link>
               </div>
             )}
@@ -380,6 +380,6 @@ export function App() {
 
   // The player takes the whole screen, without the sidebar.
   const watch = /^\/watch\/(movie|series)\/(tt\d+)$/.exec(path);
-  if (watch) return <Suspense fallback={<div className="player waiting" />}><Watch key={path} type={watch[1] as 'movie' | 'series'} id={watch[2]!} /></Suspense>;
+  if (watch) return <StatusContext.Provider value={status}><Suspense fallback={<div className="player waiting" />}><Watch key={path} type={watch[1] as 'movie' | 'series'} id={watch[2]!} /></Suspense></StatusContext.Provider>;
   return <Shell status={status}><Suspense fallback={<Loading />}><Page path={path} /></Suspense></Shell>;
 }

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { Job, JobFile, Meta, Release } from '../shared/types.js';
+import type { DebridService, Job, JobFile, Meta, Release } from '../shared/types.js';
 import type { ServerOptions } from './config.js';
 import { freeBytes } from './disk.js';
 import { downloadToFile, moveFile } from './downloader.js';
@@ -10,7 +10,8 @@ import { planFiles } from './organize.js';
 import { formatBytes } from './release.js';
 import type { SettingsService } from './settings.js';
 import { JsonFile } from './store.js';
-import { type Torbox, TorboxError, type TorboxTorrent, magnetFor } from './torbox.js';
+import { type Debrid, DebridError, type DebridTorrent, type Services } from './debrid.js';
+import { magnetFor } from './torbox.js';
 
 export interface NewJob {
   meta: Meta;
@@ -23,7 +24,7 @@ export interface NewJob {
 interface Deps {
   options: ServerOptions;
   settings: SettingsService;
-  torbox: Torbox;
+  debrid: Services;
   onCompleted: (job: Job) => void;
   onFailed?: (job: Job) => void;
 }
@@ -50,7 +51,7 @@ export class JobManager {
   private lastCreate = 0;
   private lastPoll = 0;
   private timer: NodeJS.Timeout | null = null;
-  private torrentList: { at: number; list: TorboxTorrent[] } | null = null;
+  private readonly torrentLists = new Map<DebridService, { at: number; list: DebridTorrent[] }>();
 
   constructor(private readonly deps: Deps) {
     this.file = new JsonFile(path.join(deps.options.dataDir, 'jobs.json'), () => ({ jobs: [] }));
@@ -173,8 +174,8 @@ export class JobManager {
     job.error = undefined;
     job.note = undefined;
     job.nextAttemptAt = undefined;
-    // Re-read the torrent from TorBox: finished files are skipped, partial ones resume,
-    // and a torrent that has left the TorBox list gets added again.
+    // Re-read the torrent from the service: finished files are skipped, partial ones resume,
+    // and a torrent that has left the service's list gets added again.
     job.files = [];
     this.misses.delete(job.id);
     this.readds.delete(job.id);
@@ -220,7 +221,7 @@ export class JobManager {
     this.file.save();
   }
 
-  /** Removes the TorBox torrent Haul added for this job, unless another download still needs it. */
+  /** Removes the torrent Haul added for this job, unless another download still needs it. */
   private async releaseTorrent(job: Job): Promise<void> {
     if (!job.torbox.createdByHaul || !job.torbox.id) return;
     const heir = this.jobs.find((other) => other.id !== job.id
@@ -233,7 +234,12 @@ export class JobManager {
       this.touch(heir);
       return;
     }
-    await this.deps.torbox.remove(job.torbox.id).catch(() => undefined);
+    await this.serviceOf(job).remove(job.torbox.id).catch(() => undefined);
+  }
+
+  /** The service a download was started on. */
+  private serviceOf(job: Job): Debrid {
+    return this.deps.debrid.get(job.torbox.service);
   }
 
   private partDir(job: Job): string {
@@ -249,19 +255,20 @@ export class JobManager {
     this.ticking = true;
     try {
       const now = Date.now();
-      if (this.deps.torbox.configured) {
+      const active = this.deps.debrid.active;
+      if (active.configured) {
         if (now - this.lastCreate >= 3000) {
           const next = this.jobs.slice().reverse().find((job) => job.status === 'queued' && (!job.nextAttemptAt || job.nextAttemptAt <= now));
-          if (next) { this.lastCreate = now; await this.addToTorbox(next); }
-        }
-        if (now - this.lastPoll >= 5000 && this.jobs.some((job) => job.status === 'torbox')) {
-          this.lastPoll = now;
-          await this.pollTorbox();
+          if (next) { this.lastCreate = now; await this.addToService(next); }
         }
       } else {
         for (const job of this.jobs) {
-          if (job.status === 'queued' && !job.note) { job.note = 'Waiting for a TorBox API key. Add it in Settings.'; this.touch(job); }
+          if (job.status === 'queued' && !job.note) { job.note = `Waiting for a ${active.name} API key. Add it in Settings.`; this.touch(job); }
         }
+      }
+      if (now - this.lastPoll >= 5000 && this.jobs.some((job) => job.status === 'torbox')) {
+        this.lastPoll = now;
+        await this.pollServices();
       }
       this.fillDownloadSlots();
       this.updateSpeeds();
@@ -272,41 +279,43 @@ export class JobManager {
     }
   }
 
-  private async torrents(maxAgeMs: number): Promise<TorboxTorrent[]> {
-    if (!this.torrentList || Date.now() - this.torrentList.at > maxAgeMs) {
-      this.torrentList = { at: Date.now(), list: await this.deps.torbox.list() };
-    }
-    return this.torrentList.list;
+  private async torrents(service: Debrid, maxAgeMs: number): Promise<DebridTorrent[]> {
+    const known = this.torrentLists.get(service.id);
+    if (known && Date.now() - known.at <= maxAgeMs) return known.list;
+    const list = await service.list();
+    this.torrentLists.set(service.id, { at: Date.now(), list });
+    return list;
   }
 
-  private matchTorrent(job: Job, list: TorboxTorrent[]): TorboxTorrent | undefined {
+  private matchTorrent(job: Job, list: DebridTorrent[]): DebridTorrent | undefined {
     const hash = job.release.hash;
     return list.find((torrent) => job.torbox.id !== undefined && torrent.id === job.torbox.id)
       ?? list.find((torrent) => torrent.hash?.toLowerCase() === hash || torrent.alternative_hashes?.some((value) => value.toLowerCase() === hash));
   }
 
-  private async addToTorbox(job: Job): Promise<void> {
+  private async addToService(job: Job): Promise<void> {
+    const service = this.deps.debrid.active;
     try {
-      const existing = this.matchTorrent(job, await this.torrents(20_000));
+      const existing = this.matchTorrent(job, await this.torrents(service, 20_000));
       if (existing) {
-        job.torbox = { id: existing.id, state: existing.download_state, progress: existing.progress, createdByHaul: false };
+        job.torbox = { service: service.id, id: existing.id, state: existing.download_state, progress: existing.progress, createdByHaul: false };
       } else {
-        const created = await this.deps.torbox.create(magnetFor(job.release.hash, job.release.name), job.release.name);
-        job.torbox = { id: created.torrentId, queuedId: created.queuedId, state: created.queuedId ? 'Queued on TorBox' : 'Added', createdByHaul: true };
-        this.torrentList = null;
+        const created = await service.create(magnetFor(job.release.hash, job.release.name), job.release.name);
+        job.torbox = { service: service.id, id: created.torrentId, queuedId: created.queuedId, state: created.queuedId ? `Queued on ${service.name}` : 'Added', createdByHaul: true };
+        this.torrentLists.delete(service.id);
       }
       job.status = 'torbox';
       job.note = undefined;
       this.lastPoll = 0;
     } catch (error) {
-      const failure = error as TorboxError;
-      const message = failure.message || 'TorBox rejected the torrent';
+      const failure = error as DebridError;
+      const message = failure.message || `${service.name} rejected the torrent`;
       if (failure.code === 'RATE_LIMIT') {
         job.nextAttemptAt = Date.now() + (failure.retryAfter ?? 60) * 1000;
         job.note = message;
       } else if (failure.code === 'NETWORK' || failure.code === 'NO_KEY' || failure.code === 'BAD_KEY' || /active|limit|slot|cooldown/i.test(`${failure.code} ${message}`)) {
         job.nextAttemptAt = Date.now() + 60_000;
-        job.note = /active|slot/i.test(message) ? 'All your TorBox download slots are busy. Waiting for one to free up.' : message;
+        job.note = /active|slot/i.test(message) ? `All your ${service.name} download slots are busy. Waiting for one to free up.` : message;
       } else {
         job.status = 'failed';
         job.error = message;
@@ -315,27 +324,40 @@ export class JobManager {
     this.touch(job);
   }
 
-  private async pollTorbox(): Promise<void> {
-    let list: TorboxTorrent[];
+  /** Each service with downloads on it is asked about them in turn. */
+  private async pollServices(): Promise<void> {
+    const groups = new Map<DebridService, Job[]>();
+    for (const job of this.jobs.filter((item) => item.status === 'torbox')) {
+      const id = job.torbox.service ?? 'torbox';
+      groups.set(id, [...(groups.get(id) ?? []), job]);
+    }
+    for (const [id, waiting] of groups) await this.pollService(this.deps.debrid.get(id), waiting);
+  }
+
+  private async pollService(service: Debrid, waiting: Job[]): Promise<void> {
+    if (!service.configured) {
+      for (const job of waiting) { job.note = `Started on ${service.name}, which has no API key now. Add it in Settings to finish.`; this.touch(job); }
+      return;
+    }
+    let list: DebridTorrent[];
     try {
       // A few known torrents are quicker to ask about one by one than reading a list of thousands.
-      const waiting = this.jobs.filter((job) => job.status === 'torbox');
-      if (waiting.length && waiting.length <= 8 && waiting.every((job) => job.torbox.id !== undefined)) {
+      if (waiting.length <= 8 && waiting.every((job) => job.torbox.id !== undefined)) {
         // Any trouble (a deleted torrent may answer with an error) falls back to the full list, which handles it.
-        list = await Promise.all(waiting.map((job) => this.deps.torbox.torrent(job.torbox.id!)))
-          .then((found) => (found.every(Boolean) ? found as TorboxTorrent[] : this.torrents(0)), () => this.torrents(0));
+        list = await Promise.all(waiting.map((job) => service.torrent(job.torbox.id!)))
+          .then((found) => (found.every(Boolean) ? found as DebridTorrent[] : this.torrents(service, 0)), () => this.torrents(service, 0));
       } else {
-        list = await this.torrents(0);
+        list = await this.torrents(service, 0);
       }
     } catch (error) {
-      for (const job of this.jobs) if (job.status === 'torbox') job.note = (error as Error).message;
+      for (const job of waiting) job.note = (error as Error).message;
       return;
     }
     const settings = this.deps.settings.value;
-    for (const job of this.jobs.filter((item) => item.status === 'torbox')) {
-      const torrent = this.matchTorrent(job, list);
+    for (const job of waiting) {
+      let torrent = this.matchTorrent(job, list);
       if (!torrent) {
-        if (job.torbox.queuedId && !job.torbox.id) { job.torbox.state = 'Queued on TorBox'; continue; }
+        if (job.torbox.queuedId && !job.torbox.id) { job.torbox.state = `Queued on ${service.name}`; continue; }
         const misses = (this.misses.get(job.id) ?? 0) + 1;
         this.misses.set(job.id, misses);
         if (misses >= 4) {
@@ -344,11 +366,11 @@ export class JobManager {
           this.readds.set(job.id, readds);
           if (readds > 2) {
             job.status = 'failed';
-            job.error = 'The torrent keeps disappearing from your TorBox list.';
+            job.error = `The torrent keeps disappearing from your ${service.name} list.`;
           } else {
             job.status = 'queued';
             job.torbox = {};
-            job.note = 'The torrent left your TorBox list. Adding it again.';
+            job.note = `The torrent left your ${service.name} list. Adding it again.`;
           }
           this.touch(job);
         }
@@ -360,11 +382,13 @@ export class JobManager {
       job.torbox.progress = torrent.progress;
       job.torbox.speed = torrent.download_speed;
       job.torbox.eta = torrent.eta;
-      job.note = /stalled|no seeds/i.test(torrent.download_state) ? 'TorBox is waiting for seeders for this torrent.' : undefined;
+      job.note = /stalled|no seeds/i.test(torrent.download_state) ? `${service.name} is waiting for seeders for this torrent.` : undefined;
       if (/error|failed|invalid/i.test(torrent.download_state)) {
         job.status = 'failed';
-        job.error = `TorBox reported: ${torrent.download_state}`;
+        job.error = `${service.name} reported: ${torrent.download_state}`;
       } else if (torrent.download_present || (torrent.download_finished && torrent.cached)) {
+        // Some services leave files out of their list: ask for this torrent's.
+        if (!torrent.files?.length) torrent = (await service.torrent(torrent.id).catch(() => undefined)) ?? torrent;
         const files = planFiles(job, torrent.files || [], {
           moviesDir: settings.moviesDir,
           tvDir: settings.tvDir,
@@ -426,8 +450,8 @@ export class JobManager {
         job.note = short;
         return;
       }
-      if (job.note?.startsWith('Waiting for free space') || job.note?.startsWith("TorBox didn't accept")) job.note = undefined;
-      const url = await this.deps.torbox.downloadLink(job.torbox.id!, file.torboxFileId);
+      if (job.note?.startsWith('Waiting for free space') || job.note?.includes("didn't accept your API key")) job.note = undefined;
+      const url = await this.serviceOf(job).downloadLink(job.torbox.id!, file.torboxFileId);
       await downloadToFile(url, part, {
         expectedSize: file.size || undefined,
         connections: this.deps.settings.value.downloads.connections,
@@ -445,7 +469,7 @@ export class JobManager {
     } catch (error) {
       if (controller.signal.aborted) return;
       // A refused key or no key isn't this file's fault: wait for a working one without using up retries.
-      if (error instanceof TorboxError && (error.code === 'BAD_KEY' || error.code === 'NO_KEY')) {
+      if (error instanceof DebridError && (error.code === 'BAD_KEY' || error.code === 'NO_KEY')) {
         file.status = 'pending';
         file.retryAt = Date.now() + 60_000;
         job.note = error.message;

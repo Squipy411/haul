@@ -2,16 +2,19 @@ import { Download, Info, Play, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { Job, MetaPreview, WatchProgress } from '../../../shared/types';
 import { jobProgress } from '../../../shared/jobs';
+import { SERVICE_NAMES } from '../../../shared/services';
 import { api, preparePlay, rememberPreview } from '../api';
 import { ListButton, TrailerButton } from '../components/Extras';
 import { Hero } from '../components/Hero';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
 import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib';
+import { useService } from '../shell';
 
 const CATALOG_ID: Record<string, string> = { top: 'top', new: 'year', featured: 'imdbRating' };
 
 
 function Transfers({ jobs }: { jobs: Job[] }) {
+  const service = useService().name;
   const active = jobs.filter((job) => ['queued', 'torbox', 'downloading', 'paused'].includes(job.status));
   if (!active.length) return null;
   return (
@@ -32,8 +35,8 @@ function Transfers({ jobs }: { jobs: Job[] }) {
               <div style={{ minWidth: 0 }}>
                 <div className="name truncate">{job.title}</div>
                 <div className="meta truncate">
-                  {job.status === 'torbox' ? join([label, `TorBox is fetching it, ${Math.round(progress.value * 100)}%`])
-                    : job.status === 'queued' ? join([label, 'Waiting for TorBox'])
+                  {job.status === 'torbox' ? join([label, `${SERVICE_NAMES[job.torbox.service ?? 'torbox']} is fetching it, ${Math.round(progress.value * 100)}%`])
+                    : job.status === 'queued' ? join([label, `Waiting for ${service}`])
                       : job.status === 'paused' ? join([label, 'Paused'])
                         : join([label, `${bytes(total * progress.value)} of ${bytes(total)}`, duration(left) ? `${duration(left)} left` : ''])}
                 </div>
@@ -48,7 +51,7 @@ function Transfers({ jobs }: { jobs: Job[] }) {
   );
 }
 
-/** Episodes of your shows that are out but not in your library: watch now from TorBox, or fetch them. */
+/** Episodes of your shows that are out but not in your library: watch now from your service, or fetch them. */
 function NewEpisodes() {
   const { data } = useAsync(() => api.newEpisodes(), []);
   const shows = data?.shows ?? [];

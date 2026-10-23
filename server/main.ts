@@ -12,7 +12,11 @@ import { MediaTools } from './media.js';
 import { registerPlay } from './play.js';
 import { SearchService } from './search.js';
 import { SettingsService } from './settings.js';
-import { Torbox, TorboxError } from './torbox.js';
+import { Torbox } from './torbox.js';
+import { DebridError, Services } from './debrid.js';
+import { RealDebrid } from './realdebrid.js';
+import { AllDebrid } from './alldebrid.js';
+import { Premiumize } from './premiumize.js';
 import { Profiles } from './profiles.js';
 import { Tunnel } from './tunnel.js';
 import { Uploads } from './uploads.js';
@@ -51,15 +55,21 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   }
   const auth = new Auth(settings, options.auth);
   const updates = new UpdateChecker();
-  const torbox = new Torbox(() => settings.value.torboxApiKey);
-  const search = new SearchService({ torbox, settings: () => ({ ...settings.publicView(), torboxApiKey: settings.value.torboxApiKey }) });
+  // Every service is ready to use; the one picked in Settings fetches new things.
+  const debrid = new Services(() => settings.value.debridService, {
+    torbox: new Torbox(() => settings.value.torboxApiKey),
+    realdebrid: new RealDebrid(() => settings.value.debridKeys.realdebrid),
+    alldebrid: new AllDebrid(() => settings.value.debridKeys.alldebrid),
+    premiumize: new Premiumize(() => settings.value.debridKeys.premiumize)
+  });
+  const search = new SearchService({ debrid, settings: () => ({ ...settings.publicView(), torboxApiKey: settings.value.torboxApiKey }) });
   const library = new Library(options, settings);
   const notifier = new Notifier(settings);
   const where = (job: { type: string; imdbId: string; season?: number }) => `/title/${job.type}/${job.imdbId}${job.season !== undefined ? `?season=${job.season}` : ''}`;
   const jobs = new JobManager({
     options,
     settings,
-    torbox,
+    debrid,
     onCompleted: (job) => {
       library.recordDownload(job);
       if (settings.value.notifications.downloadFinished) {
@@ -85,9 +95,9 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
   });
   const uploads = new Uploads({ settings: () => settings.value, meta: catalog.meta, onAdded: (added) => library.recordUpload(added) });
   void uploads.clearLeftovers();
-  registerApi(router, { options, settings, auth, torbox, search, jobs, library, updates, follows, notifier, profiles, tunnel, uploads });
+  registerApi(router, { options, settings, auth, debrid, search, jobs, library, updates, follows, notifier, profiles, tunnel, uploads });
   const media = new MediaTools();
-  const transcodes = registerPlay(router, { library, catalog, search, torbox, media, progress: (ctx) => profiles.progress(ctx), apiKey: () => settings.value.torboxApiKey });
+  const transcodes = registerPlay(router, { library, catalog, search, debrid, media, progress: (ctx) => profiles.progress(ctx), apiKey: () => settings.value.torboxApiKey });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://haul.local');
@@ -140,7 +150,7 @@ export async function startServer(overrides: Partial<ServerOptions> = {}): Promi
       ctx.json(404, { error: 'Not found' });
     } catch (error) {
       // TorBox saying no (a refused key, a full queue) is TorBox's answer, not a fault in Haul.
-      const status = error instanceof HttpError ? error.status : error instanceof TorboxError ? 502 : 500;
+      const status = error instanceof HttpError ? error.status : error instanceof DebridError ? 502 : 500;
       if (status === 500) console.error(`[http] ${req.method} ${url.pathname}`, error);
       ctx.json(status, { error: (error as Error).message || 'Something went wrong' });
     }

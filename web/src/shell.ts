@@ -14,7 +14,7 @@ const pageTitles: Array<{ page: string | null }> = [];
 let transferText = '';
 function applyTitle(): void {
   const page = [...pageTitles].reverse().find((entry) => entry.page)?.page;
-  document.title = page || transferText ? [transferText, page, 'Haul'].filter(Boolean).join(' · ') : 'Haul · TorBox player';
+  document.title = page || transferText ? [transferText, page, 'Haul'].filter(Boolean).join(' · ') : 'Haul · Stream & download';
 }
 export function setTransferTitle(text: string): void {
   transferText = text;
@@ -35,6 +35,10 @@ export const useOpenSearch = () => useContext(SearchContext);
 // The latest /api/status, polled by the shell, for pages that need it (free disk space).
 export const StatusContext = createContext<Status | null>(null);
 export const useStatus = () => useContext(StatusContext);
+
+const TORBOX = { id: 'torbox', name: 'TorBox', checksCache: true } as const;
+/** The debrid service in use: its name for labels, and whether it can say what's ready in advance. */
+export const useService = (): Status['service'] => useContext(StatusContext)?.service ?? TORBOX;
 
 /** The disk a kind of file lands on: "Movies", "Shows" or "Downloads in progress". */
 export function diskFor(status: Status | null, label: string): DiskSpace | undefined {

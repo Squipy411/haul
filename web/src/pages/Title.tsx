@@ -8,7 +8,7 @@ import { Hero } from '../components/Hero';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
 import { Empty, ErrorNote, Loading, Menu, Picker, PosterCard, Sheet, TabBar, Toggle, join } from '../components/ui';
 import { Link, airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
-import { diskFor, useCrumb, useStatus } from '../shell';
+import { diskFor, useCrumb, useService, useStatus } from '../shell';
 
 const aired = (episode: Episode) => !episode.released || Date.parse(episode.released) <= Date.now() + 12 * 3600_000;
 const seasonName = (season: number) => (season === 0 ? 'Specials' : `Season ${season}`);
@@ -97,6 +97,7 @@ function PlanSheet({ meta, season, episodes, onClose }: { meta: Meta; season: nu
   const [busy, setBusy] = useState(false);
   const count = plan ? plan.items.reduce((sum, item) => sum + item.episodes.length, 0) : 0;
   const disk = diskFor(useStatus(), 'Shows');
+  const service = useService();
   const tooBig = Boolean(plan && disk && plan.totalSize > disk.free);
 
   const start = async () => {
@@ -136,7 +137,7 @@ function PlanSheet({ meta, season, episodes, onClose }: { meta: Meta; season: nu
             <div className="plan-figure">
               <div><b>{count}</b><span>episodes</span></div>
               <div><b>{plan.totalSize ? bytes(plan.totalSize) : '–'}</b><span>about this much</span></div>
-              <div><b>{plan.cachedCount}</b><span>ready now on TorBox</span></div>
+              {service.checksCache && <div><b>{plan.cachedCount}</b><span>ready now on {service.name}</span></div>}
               {disk && <div><b>{bytes(disk.free)}</b><span>free on the disk</span></div>}
             </div>
           )}
@@ -173,6 +174,7 @@ function PlanSheet({ meta, season, episodes, onClose }: { meta: Meta; season: nu
 function EverythingSheet({ meta, seasons, onClose }: { meta: Meta; seasons: number[]; onClose: () => void }) {
   const download = useDownloader(meta);
   const disk = diskFor(useStatus(), 'Shows');
+  const service = useService();
   const [plans, setPlans] = useState<Array<{ season: number; plan?: SeasonPlan; error?: string }>>(() => seasons.map((season) => ({ season })));
   const [busy, setBusy] = useState(false);
 
@@ -225,7 +227,7 @@ function EverythingSheet({ meta, seasons, onClose }: { meta: Meta; seasons: numb
       <div className="plan-figure">
         <div><b>{episodes}</b><span>episodes</span></div>
         <div><b>{size ? bytes(size) : '–'}</b><span>about this much</span></div>
-        <div><b>{cached}</b><span>ready now on TorBox</span></div>
+        {service.checksCache && <div><b>{cached}</b><span>ready now on {service.name}</span></div>}
         {disk && <div><b>{bytes(disk.free)}</b><span>free on the disk</span></div>}
       </div>
       <div className="plan-progress" aria-hidden="true"><i style={{ width: `${(done / Math.max(1, plans.length)) * 100}%` }} /></div>
@@ -489,30 +491,31 @@ function SeriesView({ meta, onWatched }: { meta: Meta; onWatched: () => void }) 
 function MovieView({ meta }: { meta: Meta }) {
   const download = useDownloader(meta);
   const { navigate } = useRouter();
+  const service = useService();
   const releases = useAsync(() => api.movieReleases(meta.id), [meta.id]);
   return (
     <section style={{ marginTop: 30 }} id="versions">
       <div className="section-title" style={{ marginTop: 0 }}>
         <div>
           <h2>Versions</h2>
-          <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>Press ▶ to watch one now from TorBox, or download it to your library.</p>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 13 }}>Press ▶ to watch one now from {service.name}, or download it to your library.</p>
         </div>
         {releases.data && <span className="faint num" style={{ whiteSpace: 'nowrap' }}>{releases.data.releases.length} found</span>}
       </div>
-      {releases.loading && <Loading text="Searching torrents and checking TorBox…" />}
+      {releases.loading && <Loading text={service.checksCache ? `Searching torrents and checking ${service.name}…` : 'Searching torrents…'} />}
       {releases.error && <ErrorNote message={releases.error} onRetry={releases.reload} />}
       {releases.data && <ReleaseTable releases={releases.data.releases} onStream={(release) => navigate(`/watch/movie/${meta.id}?hash=${release.hash}`)} onDownload={(release) => download([{ release }], meta.name)} />}
     </section>
   );
 }
 
-/** Play, Resume, or Play S01E01: your file when you have it, otherwise streamed from TorBox. */
+/** Play, Resume, or Play S01E01: your file when you have it, otherwise streamed from the debrid service. */
 function PlayButton({ meta, resume }: { meta: Meta; resume?: WatchProgress }) {
   const first = meta.episodes.filter((episode) => episode.season > 0 && aired(episode)).sort((a, b) => a.season - b.season || a.episode - b.episode)[0];
   const target = meta.type === 'series' ? (resume ? { season: resume.season!, episode: resume.episode! } : first) : undefined;
   const play = { type: meta.type, imdbId: meta.id, season: target?.season, episode: target?.episode };
-  // Opening the page gets the stream going at TorBox (which takes a few seconds to convert the first
-  // part), so Play is usually instant by the time it's pressed. Only versions already in the TorBox list.
+  // Opening the page gets the stream going at the service (TorBox takes a few seconds to convert the first
+  // part), so Play is usually instant by the time it's pressed. Only versions already in its list.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (!meta.ownedMovie && (meta.type === 'movie' || target)) preparePlay(play, true); }, [meta.id, target?.season, target?.episode]);
   if (meta.type === 'series' && !target) return null;

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Settings, SettingsPatch } from '../shared/types.js';
+import { SERVICES } from '../shared/services.js';
+import type { DebridService, Settings, SettingsPatch } from '../shared/types.js';
 import type { ServerOptions } from './config.js';
 import { JsonFile } from './store.js';
 
@@ -30,7 +31,9 @@ function randomToken(bytes = 24): string {
 
 function defaults(options: ServerOptions): StoredSettings {
   return {
+    debridService: 'torbox',
     torboxApiKey: options.defaults.torboxApiKey,
+    debridKeys: { realdebrid: '', alldebrid: '', premiumize: '' },
     moviesDir: options.defaults.moviesDir,
     tvDir: options.defaults.tvDir,
     incompleteDir: options.defaults.incompleteDir,
@@ -134,6 +137,8 @@ export class SettingsService {
     data.addon = { ...base.addon, ...data.addon };
     data.library = { ...base.library, ...data.library };
     data.notifications = { ...base.notifications, ...data.notifications };
+    data.debridKeys = { ...base.debridKeys, ...data.debridKeys };
+    if (!SERVICES.includes(data.debridService)) data.debridService = 'torbox';
     if (!data.torboxApiKey && options.defaults.torboxApiKey) data.torboxApiKey = options.defaults.torboxApiKey;
     data.calendarToken ||= randomToken(18);
     data.sessionGeneration ??= 0;
@@ -156,8 +161,10 @@ export class SettingsService {
   publicView(): Settings {
     const { passwordHash, sessionSecret: _session, streamSecret: _stream, calendarToken: _calendar, sessionGeneration: _generation, remote: _remote, calendarMode: _calendarMode, totpSecret, totpPending: _pending, totpUsedStep: _used, ...rest } = this.file.data;
     const key = rest.torboxApiKey;
+    const masked = (value: string) => (value ? `${MASK}${value.slice(-4)}` : '');
     return {
       ...rest,
+      debridKeys: { realdebrid: masked(rest.debridKeys.realdebrid), alldebrid: masked(rest.debridKeys.alldebrid), premiumize: masked(rest.debridKeys.premiumize) },
       notifications: { ...rest.notifications, ntfyToken: rest.notifications.ntfyToken ? `${MASK}${rest.notifications.ntfyToken.slice(-4)}` : '' },
       torboxApiKey: key ? `${MASK}${key.slice(-4)}` : '',
       passwordSet: Boolean(passwordHash),
@@ -168,6 +175,11 @@ export class SettingsService {
   update(patch: SettingsPatch): Settings {
     const data = this.file.data;
     if (typeof patch.torboxApiKey === 'string' && !patch.torboxApiKey.includes('•')) data.torboxApiKey = patch.torboxApiKey.trim();
+    if (patch.debridService !== undefined && SERVICES.includes(patch.debridService)) data.debridService = patch.debridService;
+    for (const service of ['realdebrid', 'alldebrid', 'premiumize'] as const) {
+      const value = patch.debridKeys?.[service];
+      if (typeof value === 'string' && !value.includes('•')) data.debridKeys[service] = value.trim();
+    }
     if (patch.moviesDir !== undefined) data.moviesDir = cleanDir(patch.moviesDir, data.moviesDir);
     if (patch.tvDir !== undefined) data.tvDir = cleanDir(patch.tvDir, data.tvDir);
     if (patch.incompleteDir !== undefined) data.incompleteDir = cleanDir(patch.incompleteDir, data.incompleteDir);
@@ -271,3 +283,9 @@ export class SettingsService {
     return Boolean(this.file.data.passwordHash) && verifyPassword(password, this.file.data.passwordHash);
   }
 }
+
+/** The saved key for a service. */
+export function keyFor(settings: { torboxApiKey: string; debridKeys: Settings['debridKeys'] }, service: DebridService): string {
+  return service === 'torbox' ? settings.torboxApiKey : settings.debridKeys[service] ?? '';
+}
+

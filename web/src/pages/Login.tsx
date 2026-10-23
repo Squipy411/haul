@@ -12,7 +12,7 @@ export function Login({ onDone, desktop, passwordSet, twoFactor }: { onDone: () 
     return (
       <div className="gate">
         <div className="gate-card">
-          <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></div>
+          <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>Stream &amp; download</small></span></div>
           <h1>Open Haul on its PC</h1>
           <p>This Haul runs inside the Windows app. To use it from here, open the app on that PC and set a password in Settings.</p>
         </div>
@@ -40,7 +40,7 @@ export function Login({ onDone, desktop, passwordSet, twoFactor }: { onDone: () 
           }
         }}
       >
-        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>TorBox player</small></span></div>
+        <div className="wordmark"><Mark size={26} /><span className="lockup"><b>Haul</b><small>Stream &amp; download</small></span></div>
         <h1>Sign in</h1>
         <div className="panel">
           <div className="field"><label htmlFor="login-password">Password</label><input id="login-password" className="input" type="password" autoComplete="current-password" autoFocus value={password} onChange={(event) => setPassword(event.target.value)} /></div>

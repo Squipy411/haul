@@ -5,7 +5,7 @@ import type { MediaType, PlayCaps, PlaySession, Release, WatchProgress } from '.
 import { api, languages, preparePlay } from '../api';
 import { Formats, sizeOf } from '../components/Releases';
 import { useAsync, useRouter, useToast } from '../lib';
-import { usePageTitle } from '../shell';
+import { usePageTitle, useService } from '../shell';
 
 type HlsInstance = { destroy: () => void; loadSource: (url: string) => void; attachMedia: (media: HTMLMediaElement) => void; on: (event: string, handler: (event: string, data: any) => void) => void; startLoad: (at?: number) => void; recoverMediaError: () => void };
 
@@ -151,20 +151,24 @@ export function parseVtt(text: string): Cue[] {
   return cues;
 }
 
-/** Other versions of what's playing that TorBox can stream at once; picking one carries on from the same spot. */
+/**
+ * Other versions of what's playing that the service can stream at once (or, for one that can't say,
+ * the best few to try); picking one carries on from the same spot.
+ */
 function VersionsPanel({ session, onPick, onClose }: { session: PlaySession; onPick: (release: Release) => void; onClose: () => void }) {
+  const service = useService();
   const releases = useAsync(() => (session.type === 'movie' ? api.movieReleases(session.imdbId) : api.episodeReleases(session.imdbId, session.season!, session.episode!)), [session.imdbId, session.season, session.episode]);
-  const ready = (releases.data?.releases ?? []).filter((release) => release.cached).slice(0, 40);
+  const ready = (releases.data?.releases ?? []).filter((release) => release.cached || !service.checksCache).slice(0, service.checksCache ? 40 : 15);
   return (
     <aside className="player-panel" aria-label="Versions" onPointerMove={(event) => event.stopPropagation()}>
       <div className="player-panel-head">
-        <b>Versions ready to stream</b>
+        <b>{service.checksCache ? 'Versions ready to stream' : 'Other versions to try'}</b>
         <button className="player-icon" onClick={onClose} aria-label="Close versions"><X size={18} /></button>
       </div>
       <div className="player-episodes">
         {releases.loading && <div className="player-versions-note"><span className="spinner" />Looking for versions…</div>}
         {releases.error && <div className="player-versions-note">{releases.error}</div>}
-        {releases.data && !ready.length && <div className="player-versions-note">No other versions are ready on TorBox right now.</div>}
+        {releases.data && !ready.length && <div className="player-versions-note">No other versions are ready on {service.name} right now.</div>}
         {ready.map((release) => {
           const current = release.name === session.source;
           return (
@@ -227,7 +231,9 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
   const { search, navigate, back } = useRouter();
   const season = search.has('s') ? Number(search.get('s')) : undefined;
   const episode = search.has('e') ? Number(search.get('e')) : undefined;
+  // src=torbox (its first name) asks for the debrid service's copy rather than your own file.
   const source = search.get('src') === 'torbox' ? 'torbox' : undefined;
+  const service = useService().name;
   const hash = search.get('hash') ?? undefined;
   const [session, setSession] = useState<PlaySession | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -272,9 +278,9 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
               <p>{error}</p>
               <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button className="btn primary" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
-                {source !== 'torbox' && <button className="btn" onClick={() => navigate(`/watch/${type}/${id}?${new URLSearchParams({ ...(season !== undefined ? { s: String(season), e: String(episode) } : {}), src: 'torbox' })}`, { replace: true })}>{hash ? 'Play the best version instead' : 'Stream from TorBox'}</button>}
+                {source !== 'torbox' && <button className="btn" onClick={() => navigate(`/watch/${type}/${id}?${new URLSearchParams({ ...(season !== undefined ? { s: String(season), e: String(episode) } : {}), src: 'torbox' })}`, { replace: true })}>{hash ? 'Play the best version instead' : `Stream from ${service}`}</button>}
                 {/* Nothing ready to stream: the versions to download (or pick from) are one step away. */}
-                {/Nothing is ready|no longer listed|has no file for|doesn't have this version/i.test(error) && (
+                {/Nothing is ready|no longer listed|has no file for|doesn't have (this|a ready) version|No versions of this/i.test(error) && (
                   <button className="btn" onClick={() => navigate(type === 'series' ? `/title/series/${id}?season=${season}&tab=download` : `/title/movie/${id}`, { replace: true })}>See versions to download</button>
                 )}
                 <button className="btn ghost" onClick={leave}>Back</button>
@@ -283,8 +289,8 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
           ) : (
             <>
               <span className="spinner large" />
-              <p>{source === 'torbox' || hash ? 'Asking TorBox for the stream…' : 'Getting it ready…'}</p>
-              {slowStart && <p className="faint" style={{ maxWidth: '44ch' }}>{source === 'torbox' || hash ? 'TorBox is finding a ready version and adding it to your list. The first time can take up to 20 seconds; after that it starts in a second or two.' : 'Still working on it. Streaming something from TorBox for the first time can take up to 20 seconds; after that it starts in a second or two.'}</p>}
+              <p>{source === 'torbox' || hash ? `Asking ${service} for the stream…` : 'Getting it ready…'}</p>
+              {slowStart && <p className="faint" style={{ maxWidth: '44ch' }}>{source === 'torbox' || hash ? `${service} is finding a ready version and adding it to your list. The first time can take up to 20 seconds; after that it starts in a second or two.` : `Still working on it. Streaming something from ${service} for the first time can take up to 20 seconds; after that it starts in a second or two.`}</p>}
             </>
           )}
         </div>
@@ -296,6 +302,7 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
 
 function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onLeave: () => void; onFailedLocal?: () => void }) {
   const toast = useToast();
+  const service = useService().name;
   const { navigate } = useRouter();
   const video = useRef<HTMLVideoElement>(null);
   const shell = useRef<HTMLDivElement>(null);
@@ -585,7 +592,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     navigate(`/watch/series/${session.imdbId}?s=${session.next.season}&e=${session.next.episode}`, { replace: true });
   }, [navigate, save, session]);
 
-  /** Another version of the same title from TorBox, picking up where this one is. */
+  /** Another version of the same title from the service, picking up where this one is. */
   const switchVersion = useCallback(async (release: Release) => {
     setVersionsOpen(false);
     position.current = absolute();
@@ -777,7 +784,10 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     return at;
   };
   const preview = hover ? previews.frameAt(hover.time) : undefined;
-  const sourceLabel = session.kind === 'torbox' ? 'Streaming from TorBox' : session.converting && mode === 'stream' ? 'Your file, converted for this browser' : 'Your file';
+  const converted = session.converting && mode === 'stream';
+  const sourceLabel = session.kind === 'torbox' ? 'Streaming from TorBox'
+    : session.kind === 'remote' ? `Streaming from ${session.service ?? 'your service'}${converted ? ', converted on your server' : ''}`
+      : converted ? 'Your file, converted for this browser' : 'Your file';
 
   return (
     <div
@@ -844,8 +854,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
           <h1>Playback stopped</h1>
           <p>{failure}</p>
           <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-            {/* Trying the same file again won't change its format, so TorBox comes first when it can help. */}
-            {onFailedLocal && <button className="btn primary" onClick={onFailedLocal}>Stream from TorBox instead</button>}
+            {/* Trying the same file again won't change its format, so the debrid service comes first when it can help. */}
+            {onFailedLocal && <button className="btn primary" onClick={onFailedLocal}>Stream from {service} instead</button>}
             <button className={`btn ${onFailedLocal ? '' : 'primary'}`} onClick={retry}>Try again</button>
           </div>
         </div>

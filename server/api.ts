@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Meta, MediaType, NewEpisodes, Release, RemoteView, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
+import type { DebridService, Meta, MediaType, NewEpisodes, Release, RemoteView, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
 import { addonUrls } from './addon.js';
 import type { Profiles } from './profiles.js';
 import { type Tunnel, findCloudflared } from './tunnel.js';
@@ -15,8 +15,9 @@ import { type Context, HttpError, type Router } from './http.js';
 import type { JobManager } from './jobs.js';
 import type { Library } from './library.js';
 import type { SearchService } from './search.js';
-import type { SettingsService } from './settings.js';
-import type { Torbox } from './torbox.js';
+import { type SettingsService, keyFor } from './settings.js';
+import type { Services } from './debrid.js';
+import { SERVICES } from '../shared/services.js';
 import { cleanFilter, type FollowService } from './follows.js';
 import { scheduleCalendar } from './calendar.js';
 import { jobProgress } from '../shared/jobs.js';
@@ -28,7 +29,7 @@ interface Deps {
   options: ServerOptions;
   settings: SettingsService;
   auth: Auth;
-  torbox: Torbox;
+  debrid: Services;
   search: SearchService;
   jobs: JobManager;
   library: Library;
@@ -66,7 +67,9 @@ function aired(released?: string): boolean {
 }
 
 export function registerApi(router: Router, deps: Deps): void {
-  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, profiles, tunnel, uploads } = deps;
+  const { settings, auth, debrid, search, jobs, library, options, updates, follows, notifier, profiles, tunnel, uploads } = deps;
+  const hasKey = () => Boolean(keyFor(settings.value, settings.value.debridService));
+  const serviceFrom = (value: unknown): DebridService => (SERVICES.includes(value as DebridService) ? value as DebridService : settings.value.debridService);
 
   const withOwnership = (meta: Meta): Meta => {
     if (meta.type === 'series') {
@@ -89,9 +92,10 @@ export function registerApi(router: Router, deps: Deps): void {
       needsPassword: auth.locked,
       passwordSet: Boolean(settings.value.passwordHash),
       canRemovePassword: auth.canRemovePassword,
-      setupComplete: Boolean(settings.value.torboxApiKey) && !auth.locked,
-      torboxConfigured: torbox.configured,
-      torboxRefused: authenticated ? torbox.refused : false,
+      setupComplete: hasKey() && !auth.locked,
+      service: { id: debrid.id, name: debrid.name, checksCache: debrid.checksCache },
+      torboxConfigured: debrid.configured,
+      torboxRefused: authenticated ? debrid.refused : false,
       twoFactor: Boolean(value.totpSecret),
       access: authenticated ? { https: isHttps(ctx), fromInternet: isFromInternet(ctx) } : undefined,
       profiles: authenticated ? profiles.list() : [],
@@ -108,7 +112,7 @@ export function registerApi(router: Router, deps: Deps): void {
     };
   };
 
-  /** The download furthest along: one coming to this machine first, then one TorBox is fetching. */
+  /** The download furthest along: one coming to this machine first, then one the service is fetching. */
   const nowDownloading = (): Status['nowDownloading'] => {
     const ranked = jobs.jobs
       .filter((job) => job.status === 'downloading' || job.status === 'torbox')
@@ -210,8 +214,8 @@ export function registerApi(router: Router, deps: Deps): void {
 
   // --- First-run setup ----------------------------------------------------------
   // Open while a server install has no password yet; afterwards only to signed-in users
-  // who still need a TorBox key.
-  const setupOpen = (ctx: Context) => auth.locked || (auth.isAuthenticated(ctx) && !settings.value.torboxApiKey);
+  // who still need a key for their debrid service.
+  const setupOpen = (ctx: Context) => auth.locked || (auth.isAuthenticated(ctx) && !hasKey());
 
   router.get('/api/setup/defaults', (ctx) => {
     if (!setupOpen(ctx)) throw new HttpError(403, 'Setup is already done.');
@@ -221,8 +225,9 @@ export function registerApi(router: Router, deps: Deps): void {
   router.post('/api/setup/torbox-test', async (ctx) => {
     if (!setupOpen(ctx)) throw new HttpError(403, 'Setup is already done.');
     const body = await ctx.body();
-    if (typeof body.apiKey !== 'string' || !body.apiKey.trim()) throw new HttpError(400, 'Enter your TorBox API key.');
-    ctx.json(200, await torbox.account(body.apiKey.trim()));
+    const service = debrid.get(serviceFrom(body.service));
+    if (typeof body.apiKey !== 'string' || !body.apiKey.trim()) throw new HttpError(400, `Enter your ${service.name} API key.`);
+    ctx.json(200, await service.account(body.apiKey.trim()));
   });
 
   router.post('/api/setup', async (ctx) => {
@@ -230,9 +235,11 @@ export function registerApi(router: Router, deps: Deps): void {
     const body = await ctx.body() as SetupRequest;
     if (auth.locked && !validPassword(body.password)) throw new HttpError(400, 'Choose a password of at least 8 characters.');
     const key = typeof body.torboxApiKey === 'string' ? body.torboxApiKey.trim() : '';
-    const account = await torbox.account(key);
-    if (!account.ok) throw new HttpError(400, account.error ?? 'TorBox did not accept that key.');
-    settings.update({ torboxApiKey: key, moviesDir: body.moviesDir, tvDir: body.tvDir });
+    const id = serviceFrom(body.service);
+    const service = debrid.get(id);
+    const account = await service.account(key);
+    if (!account.ok) throw new HttpError(400, account.error ?? `${service.name} did not accept that key.`);
+    settings.update({ debridService: id, ...(id === 'torbox' ? { torboxApiKey: key } : { debridKeys: { [id]: key } }), moviesDir: body.moviesDir, tvDir: body.tvDir });
     if (auth.locked) {
       settings.setPassword(body.password!);
       auth.startSession(ctx);
@@ -274,7 +281,7 @@ export function registerApi(router: Router, deps: Deps): void {
   router.post('/api/settings/torbox-test', async (ctx) => {
     const body = await ctx.body();
     const key = typeof body.apiKey === 'string' && body.apiKey.trim() && !body.apiKey.includes('•') ? body.apiKey.trim() : undefined;
-    ctx.json(200, await torbox.account(key));
+    ctx.json(200, await debrid.get(serviceFrom(body.service)).account(key));
   });
 
   router.post('/api/settings/check-folders', async (ctx) => {

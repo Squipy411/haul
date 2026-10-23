@@ -3,7 +3,9 @@ import { encode } from 'uqr';
 import type { AddonInfo, RemoteView, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, Picker, Sheet, Toggle } from '../components/ui';
+import { SERVICE_INFO, SERVICE_NAMES } from '../../../shared/services';
 import { FolderHealth, FolderPicker } from '../components/FolderPicker';
+import { ServicePicker } from '../components/ServicePicker';
 import { hoverPreviews } from '../components/HoverPreview';
 import { ProfilesEditor } from '../components/Profiles';
 import { copyText, useAsync, useToast } from '../lib';
@@ -334,8 +336,14 @@ export function SettingsPage() {
   const [player, setPlayer] = useState<{ ffmpeg: boolean } | null>(null);
 
   useEffect(() => { if (data) setDraft(data); }, [data]);
+  // The account of the service picked (saved or not), checked with its saved key.
+  const pickedService = draft?.debridService;
   useEffect(() => {
-    api.testTorbox().then(setAccount, () => undefined);
+    if (!pickedService) return;
+    setAccount(null);
+    api.testTorbox(undefined, pickedService).then(setAccount, (failure: Error) => setAccount({ ok: false, error: failure.message }));
+  }, [pickedService]);
+  useEffect(() => {
     api.addon().then(setAddon, () => undefined);
     api.playInfo().then(setPlayer, () => undefined);
   }, []);
@@ -350,18 +358,22 @@ export function SettingsPage() {
   if (error) return <div className="canvas"><ErrorNote message={error} onRetry={reload} /></div>;
   if (!draft) return <Loading />;
   const set = (patch: (value: Settings) => Settings) => setDraft((value) => (value ? patch(value) : value));
+  const serviceName = SERVICE_NAMES[draft.debridService];
+  const savedKey = draft.debridService === 'torbox' ? draft.torboxApiKey : draft.debridKeys[draft.debridService];
   const setNotify = (patch: Partial<Settings['notifications']>) => set((value) => ({ ...value, notifications: { ...value.notifications, ...patch } }));
   const topicUrl = `${draft.notifications.ntfyServer.replace(/\/+$/, '')}/${draft.notifications.ntfyTopic}`;
 
   const save = async (): Promise<boolean> => {
     setSaving(true);
     try {
-      const { passwordSet: _passwordSet, torboxApiKey: _masked, ...rest } = draft;
+      const { passwordSet: _passwordSet, torboxApiKey: _masked, debridKeys: _keys, ...rest } = draft;
       const patch: SettingsPatch = { ...rest };
-      if (apiKey.trim()) patch.torboxApiKey = apiKey.trim();
+      const typed = apiKey.trim();
+      if (typed && draft.debridService === 'torbox') patch.torboxApiKey = typed;
+      else if (typed) patch.debridKeys = { [draft.debridService]: typed };
       setData(await api.saveSettings(patch));
       setApiKey('');
-      if (patch.torboxApiKey) setAccount(await api.testTorbox());
+      if (typed) setAccount(await api.testTorbox(undefined, draft.debridService));
       setAddon(await api.addon());
       window.dispatchEvent(new Event('haul:refresh-status'));
       toast('Settings saved');
@@ -389,7 +401,7 @@ export function SettingsPage() {
 
   const check = async () => {
     setTesting(true);
-    setAccount(await api.testTorbox(apiKey.trim() || undefined).catch((failure: Error) => ({ ok: false, error: failure.message })));
+    setAccount(await api.testTorbox(apiKey.trim() || undefined, draft?.debridService).catch((failure: Error) => ({ ok: false, error: failure.message })));
     setTesting(false);
   };
 
@@ -397,14 +409,16 @@ export function SettingsPage() {
     <div className="canvas">
       <div className="title-row"><h1>Settings</h1></div>
       <div className="settings">
-        <Section title="TorBox" description="TorBox downloads the torrents on its own servers. Haul then fetches the finished files over HTTPS, so this machine never joins a swarm.">
+        <Section title="Debrid service" description="It fetches torrents on its own servers. Haul streams from it and downloads the finished files over HTTPS, so this machine never joins a swarm. Downloads already started finish on the service they began on.">
+          <ServicePicker value={draft.debridService} onChange={(debridService) => { set((value) => ({ ...value, debridService })); setApiKey(''); }} configured={{ torbox: Boolean(draft.torboxApiKey), realdebrid: Boolean(draft.debridKeys.realdebrid), alldebrid: Boolean(draft.debridKeys.alldebrid), premiumize: Boolean(draft.debridKeys.premiumize) }} />
+          <div className="divider" />
           <div className="switch-row">
             <b>{account?.ok ? `${account.plan} plan` : account ? 'Not connected' : 'Checking…'}</b>
             <button className="btn sm" onClick={check} disabled={testing}>{testing && <span className="spinner" />}Check</button>
-            <small>{account?.ok ? (account.expires ? `Renews ${new Date(account.expires).toLocaleDateString()}` : 'Connected') : account?.error ?? ''}</small>
+            <small>{account?.ok ? (account.expires ? `Renews ${new Date(account.expires).toLocaleDateString()}` : 'Connected') : savedKey || apiKey.trim() ? account?.error ?? '' : 'Paste your key below, then save.'}</small>
           </div>
           <div className="divider" />
-          <Field id="torbox-key" label="API key" hint={`The saved key ends in ${draft.torboxApiKey.slice(-4) || '…'}. Paste a new one from torbox.app/settings to replace it.`}>
+          <Field id="torbox-key" label={`${serviceName} API key`} hint={savedKey ? `The saved key ends in ${savedKey.slice(-4)}. Paste a new one from ${SERVICE_INFO[draft.debridService].keyPage} to replace it.` : `No key saved yet. Find it at ${SERVICE_INFO[draft.debridService].keyPage}.`}>
             <input id="torbox-key" className="input code" type="password" autoComplete="off" placeholder="New API key" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
           </Field>
         </Section>
@@ -452,7 +466,7 @@ export function SettingsPage() {
               options={[{ value: '2160p', label: '4K' }, { value: '1080p', label: '1080p' }, { value: '720p', label: '720p' }, { value: 'any', label: 'Highest available' }]} />
           </div>
           <div className="divider" />
-          <SwitchRow title="Prefer versions that are ready now" description="TorBox already has them, so they start right away." checked={draft.quality.preferCached} onChange={(preferCached) => set((value) => ({ ...value, quality: { ...value.quality, preferCached } }))} />
+          <SwitchRow title="Prefer versions that are ready now" description={draft.debridService === 'realdebrid' || draft.debridService === 'alldebrid' ? `${serviceName} can't say in advance, so this only applies with TorBox or Premiumize.` : `${serviceName} already has them, so they start right away.`} checked={draft.quality.preferCached} onChange={(preferCached) => set((value) => ({ ...value, quality: { ...value.quality, preferCached } }))} />
           <SwitchRow title="Prefer bigger files" description="Among equal versions, the larger file wins. Bigger usually means a better encode." checked={draft.quality.preferLarger} onChange={(preferLarger) => set((value) => ({ ...value, quality: { ...value.quality, preferLarger } }))} />
           <SwitchRow title="Allow HDR and Dolby Vision" description="Turn off if colours look washed out on your TV." checked={draft.quality.allowHdr} onChange={(allowHdr) => set((value) => ({ ...value, quality: { ...value.quality, allowHdr } }))} />
           <SwitchRow title="Allow AI-upscaled versions" checked={draft.quality.allowUpscaled} onChange={(allowUpscaled) => set((value) => ({ ...value, quality: { ...value.quality, allowUpscaled } }))} />
@@ -466,14 +480,14 @@ export function SettingsPage() {
           </Field>
         </Section>
 
-        <Section title="Where to look" description="Torrents from every source are combined and checked against TorBox in one go.">
+        <Section title="Where to look" description={draft.debridService === 'realdebrid' || draft.debridService === 'alldebrid' ? 'Torrents from every source are combined and ranked by your quality settings.' : `Torrents from every source are combined and checked against ${serviceName} in one go.`}>
           <SwitchRow title="Torrentio" description="Public trackers. No account needed." checked={draft.sources.torrentio} onChange={(torrentio) => set((value) => ({ ...value, sources: { ...value.sources, torrentio } }))} />
           {draft.sources.torrentio && (
             <Field id="s-torrentio-url" label="Torrentio address" hint="Paste a configured Torrentio link to choose providers. Leave out debrid options.">
               <input id="s-torrentio-url" className="input code" value={draft.sources.torrentioUrl} onChange={(event) => set((value) => ({ ...value, sources: { ...value.sources, torrentioUrl: event.target.value } }))} />
             </Field>
           )}
-          <SwitchRow title="TorBox search" description="TorBox's own index, using your key." checked={draft.sources.torboxSearch} onChange={(torboxSearch) => set((value) => ({ ...value, sources: { ...value.sources, torboxSearch } }))} />
+          <SwitchRow title="TorBox search" description="TorBox's own index. Needs a TorBox key, whichever service you use." checked={draft.sources.torboxSearch} onChange={(torboxSearch) => set((value) => ({ ...value, sources: { ...value.sources, torboxSearch } }))} />
           <SwitchRow title="TorrentsDB" description="YTS, EZTV, 1337x, TorrentCSV, Nyaa and more in one free index. No account needed." checked={draft.sources.torrentsdb} onChange={(torrentsdb) => set((value) => ({ ...value, sources: { ...value.sources, torrentsdb } }))} />
           <SwitchRow title="The Pirate Bay" description="Its uploads tagged with the title's IMDb page, often whole-season packs." checked={draft.sources.piratebay} onChange={(piratebay) => set((value) => ({ ...value, sources: { ...value.sources, piratebay } }))} />
           <Field id="s-torznab" label="Prowlarr or Jackett" hint={<>Your own indexers, searched by IMDb id. In Prowlarr, open an indexer and copy its Torznab feed address; in Jackett, press Copy Torznab Feed (the <code>all</code> feed covers every indexer). Include the apikey.</>}>
@@ -489,7 +503,7 @@ export function SettingsPage() {
             <Field id="d-parallel" label="Files at once" hint="How many files download to this machine at the same time.">
               <input id="d-parallel" className="input num" type="number" min={1} max={10} style={{ width: 90 }} value={draft.downloads.concurrentFiles} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, concurrentFiles: number(event.target.value) } }))} />
             </Field>
-            <Field id="d-connections" label="Connections per file" hint="TorBox caps the speed of each connection, so big files download in parts at once. Use 1 if downloads fail.">
+            <Field id="d-connections" label="Connections per file" hint="Services cap the speed of each connection, so big files download in parts at once. Use 1 if downloads fail.">
               <input id="d-connections" className="input num" type="number" min={1} max={8} style={{ width: 90 }} value={draft.downloads.connections} onChange={(event) => set((value) => ({ ...value, downloads: { ...value.downloads, connections: number(event.target.value) } }))} />
             </Field>
           </div>
@@ -497,7 +511,7 @@ export function SettingsPage() {
           <SwitchRow title="English subtitles" description="Saves matching .srt files next to the video." checked={draft.downloads.subtitles} onChange={(subtitles) => set((value) => ({ ...value, downloads: { ...value.downloads, subtitles } }))} />
           <SwitchRow title="Episode titles in file names" checked={draft.downloads.episodeTitles} onChange={(episodeTitles) => set((value) => ({ ...value, downloads: { ...value.downloads, episodeTitles } }))} />
           <SwitchRow title="Resolution in file names" description="Lets two versions of an episode sit side by side." checked={draft.downloads.qualityInName} onChange={(qualityInName) => set((value) => ({ ...value, downloads: { ...value.downloads, qualityInName } }))} />
-          <SwitchRow title="Remove from TorBox when finished" description="Keeps your TorBox list tidy." checked={draft.downloads.removeFromTorbox} onChange={(removeFromTorbox) => set((value) => ({ ...value, downloads: { ...value.downloads, removeFromTorbox } }))} />
+          <SwitchRow title={`Remove from ${serviceName} when finished`} description={`Keeps your ${serviceName} list tidy.`} checked={draft.downloads.removeFromTorbox} onChange={(removeFromTorbox) => set((value) => ({ ...value, downloads: { ...value.downloads, removeFromTorbox } }))} />
         </Section>
 
         <Section title="Notifications" description="Haul tells your phone the moment a torrent is out for something you follow, not when it airs. It checks every 5 minutes on the day an episode comes out.">
@@ -539,11 +553,13 @@ export function SettingsPage() {
           <SwitchRow title="New sign-ins" description="Each time a device signs in, and when an address is paused for wrong passwords." checked={draft.notifications.signIns} onChange={(signIns) => setNotify({ signIns })} />
         </Section>
 
-        <Section title="Watching" description="Press play on any title or episode. Haul plays your own file when it has one, and otherwise streams the best version TorBox already has.">
+        <Section title="Watching" description={`Press play on any title or episode. Haul plays your own file when it has one, and otherwise streams the best version ${serviceName} has ready.`}>
           <div className="switch-row">
-            <b>Streaming from TorBox</b>
-            <span className={`pill ${account?.ok && /pro/i.test(account.plan ?? '') ? 'positive' : ''}`}>{account?.ok ? `${account.plan} plan` : 'Not connected'}</span>
-            <small>TorBox converts every format for the browser on its servers. Its streaming needs a Pro plan.</small>
+            <b>Streaming from {serviceName}</b>
+            <span className={`pill ${account?.ok ? 'positive' : ''}`}>{account?.ok ? `${account.plan} plan` : 'Not connected'}</span>
+            <small>{draft.debridService === 'torbox'
+              ? 'TorBox converts every format for the browser on its servers (on plans with streaming). Without it, Haul plays the file itself through ffmpeg.'
+              : `Haul plays ${serviceName}'s files itself: as they are when the browser can, otherwise converted through ffmpeg on this server.`}</small>
           </div>
           <div className="switch-row">
             <b>Your own files</b>

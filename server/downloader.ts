@@ -124,7 +124,7 @@ async function downloadInChunks(url: string, partPath: string, statePath: string
         if (response.status === 200) { await response.body?.cancel(); throw new RangesUnsupported(); }
         if (response.status !== 206 || !response.body) throw new Error(`Download server returned HTTP ${response.status}`);
         const total = /\/(\d+)$/.exec(response.headers.get('content-range') ?? '')?.[1];
-        if (total && Number(total) !== size) { await response.body.cancel(); throw new Error('The file on TorBox is a different size than expected'); }
+        if (total && Number(total) !== size) { await response.body.cancel(); throw new Error('The file on the debrid service is a different size than expected'); }
         for await (const piece of response.body as unknown as AsyncIterable<Uint8Array>) {
           dog.poke();
           const room = chunk.end - chunk.start - chunk.done;
