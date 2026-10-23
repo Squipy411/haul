@@ -8,8 +8,8 @@ const LIMIT = 500;
 export class Watchlist {
   private readonly file: JsonFile<{ items: WatchlistItem[] }>;
 
-  constructor(dataDir: string) {
-    this.file = new JsonFile(path.join(dataDir, 'watchlist.json'), () => ({ items: [] }));
+  constructor(dataDir: string, fileName = 'watchlist.json') {
+    this.file = new JsonFile(path.join(dataDir, fileName), () => ({ items: [] }));
   }
 
   list(): WatchlistItem[] {

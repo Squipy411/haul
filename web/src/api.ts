@@ -1,4 +1,4 @@
-import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
+import type { AddonInfo, Follow, HomeRow, Job, LibraryItem, LibrarySummary, MediaType, Meta, MetaPreview, NewEpisodes, PlayCaps, PlaySession, Profile, Release, ScheduleItem, SeasonPlan, Settings, SettingsPatch, SetupRequest, Status, TorboxAccount, VersionFilter, WatchProgress, WatchlistItem } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -85,6 +85,11 @@ export const api = {
   twoFactorOff: (password: string, code: string) => request<{ ok: true }>('POST', '/api/two-factor/off', { password, code }),
   endOtherSessions: () => request<{ ok: true }>('POST', '/api/sessions/end-others'),
   watchlist: () => request<{ items: WatchlistItem[] }>('GET', '/api/watchlist'),
+  addProfile: (name: string, color?: string) => request<Profile>('POST', '/api/profiles', { name, color }),
+  updateProfile: (id: string, change: { name?: string; color?: string }) => request<Profile>('PUT', `/api/profiles/${id}`, change),
+  removeProfile: (id: string) => request<{ ok: true }>('DELETE', `/api/profiles/${id}`),
+  selectProfile: (id: string) => request<Profile>('POST', '/api/profiles/select', { id }),
+  history: () => request<{ items: WatchProgress[] }>('GET', '/api/progress/history'),
   addToList: (item: Omit<WatchlistItem, 'addedAt'>) => request<WatchlistItem>('POST', '/api/watchlist', item),
   removeFromList: (type: MediaType, imdbId: string) => request<{ ok: true }>('DELETE', `/api/watchlist/${type}/${imdbId}`),
   markWatched: (body: { type: MediaType; imdbId: string; title: string; poster?: string; background?: string; episodes?: Array<{ season: number; episode: number; title?: string }>; watched: boolean }) =>

@@ -3,11 +3,13 @@ import { encode } from 'uqr';
 import type { AddonInfo, Settings, SettingsPatch, Status, TorboxAccount } from '../../../shared/types';
 import { api } from '../api';
 import { ErrorNote, Loading, Picker, Sheet, Toggle } from '../components/ui';
+import { ProfilesEditor } from '../components/Profiles';
 import { copyText, useAsync, useToast } from '../lib';
+import { useStatus } from '../shell';
 
-function Section({ title, description, children }: { title: string; description: ReactNode; children: ReactNode }) {
+function Section({ title, description, children, id }: { title: string; description: ReactNode; children: ReactNode; id?: string }) {
   return (
-    <section className="settings-row">
+    <section className="settings-row" id={id}>
       <header><h2>{title}</h2><p>{description}</p></header>
       <div className="panel">{children}</div>
     </section>
@@ -235,6 +237,9 @@ const number = (value: string) => (value === '' ? 0 : Number(value));
 
 export function SettingsPage() {
   const toast = useToast();
+  const status = useStatus();
+  // Opened from the profile menu: go straight to Profiles.
+  useEffect(() => { if (window.location.hash === '#profiles') window.setTimeout(() => document.getElementById('profiles')?.scrollIntoView({ block: 'start' }), 400); }, []);
   const { data, error, reload, setData } = useAsync(() => api.settings(), []);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -447,6 +452,10 @@ export function SettingsPage() {
               ? 'ffmpeg is installed, so MKV, x265, DTS and TrueHD files are converted on the fly. 4K is converted to 1080p when the browser can’t play it.'
               : 'Install ffmpeg on this machine to play MKV, x265 and Dolby/DTS audio in the browser. The Docker image includes it.'}</small>
           </div>
+        </Section>
+
+        <Section id="profiles" title="Profiles" description="Everyone in the house can have their own Continue watching, My list and watched episodes. The library, downloads and settings are shared. With two or more, Haul asks who's watching on each browser.">
+          <ProfilesEditor profiles={status?.profiles ?? []} current={status?.profile ?? null} onChange={() => window.dispatchEvent(new Event('haul:refresh-status'))} />
         </Section>
 
         <Section title="Nuvio and Stremio" description="Your library as an addon. Anyone with the address can play your files, so keep it private.">

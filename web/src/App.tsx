@@ -4,6 +4,7 @@ import { DropdownMenu, Tooltip } from 'radix-ui';
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import type { MetaPreview, Status } from '../../shared/types';
 import { api } from './api';
+import { ProfileMenu, ProfilePicker } from './components/Profiles';
 import { Figure, Loading, Mark } from './components/ui';
 import { Link, bytes, count, speed, usePolling, useRouter } from './lib';
 import { CrumbContext, SearchContext, StatusContext, setTransferTitle, usePageTitle } from './shell';
@@ -214,6 +215,7 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
                   <span className={`dot ${status.torboxConfigured && !status.torboxRefused ? 'on' : 'off'}`} />
                   <span className="label">TorBox</span>
                 </div>
+                {status.profile && <ProfileMenu profiles={status.profiles} current={status.profile} onManage={() => navigate('/settings#profiles')} />}
               </div>
             </header>
             {status.torboxRefused && !path.startsWith('/settings') && (
@@ -295,6 +297,9 @@ export function App() {
   if (status.needsPassword) return <Suspense fallback={<Loading />}><Setup createPassword onDone={refresh} /></Suspense>;
   if (!status.authenticated) return <Suspense fallback={<Loading />}><Login onDone={refresh} desktop={status.desktop} passwordSet={status.passwordSet} twoFactor={status.twoFactor} /></Suspense>;
   if (!status.setupComplete) return <Suspense fallback={<Loading />}><Setup createPassword={false} onDone={refresh} /></Suspense>;
+
+  // A house with more than one profile is asked who's watching, once per browser.
+  if (status.profiles.length > 1 && !status.profileChosen) return <ProfilePicker profiles={status.profiles} />;
 
   // The player takes the whole screen, without the sidebar.
   const watch = /^\/watch\/(movie|series)\/(tt\d+)$/.exec(path);

@@ -18,8 +18,8 @@ export class ProgressStore {
   /** Saves get strictly increasing times, so "latest" is never a tie. */
   private last = 0;
 
-  constructor(dataDir: string) {
-    this.file = new JsonFile(path.join(dataDir, 'progress.json'), () => ({ items: {} }));
+  constructor(dataDir: string, fileName = 'progress.json') {
+    this.file = new JsonFile(path.join(dataDir, fileName), () => ({ items: {} }));
   }
 
   get(key: string): WatchProgress | undefined {
@@ -63,6 +63,11 @@ export class ProgressStore {
       if (!latest.has(title)) latest.set(title, entry);
     }
     return [...latest.values()].filter((entry) => entry.position >= STARTED || isFinished(entry)).slice(0, limit);
+  }
+
+  /** Everything watched or started, newest first. */
+  history(limit = 300): WatchProgress[] {
+    return Object.values(this.file.data.items).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit);
   }
 
   flush(): void {

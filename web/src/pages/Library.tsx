@@ -1,9 +1,9 @@
-import { Copy, ExternalLink, Play } from 'lucide-react';
+import { Check, Copy, ExternalLink, Play, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { LibrarySummary, MetaPreview, WatchlistItem } from '../../../shared/types';
+import type { LibrarySummary, MetaPreview, WatchProgress, WatchlistItem } from '../../../shared/types';
 import { api } from '../api';
 import { Empty, ErrorNote, Loading, Poster, PosterCard, Sheet, TabBar } from '../components/ui';
-import { Link, ago, bytes, copyText, count, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
+import { Link, ago, bytes, copyText, count, pad, useAsync, usePolling, useQueryState, useRouter, useToast } from '../lib';
 
 function AddonCard() {
   const toast = useToast();
@@ -113,12 +113,49 @@ function SavedList() {
   );
 }
 
+/** Everything watched or started, newest first; each opens where it left off. */
+function History() {
+  const toast = useToast();
+  const { data, error, reload, setData } = useAsync(() => api.history(), []);
+  if (error) return <ErrorNote message={error} onRetry={reload} />;
+  if (!data) return <Loading />;
+  if (!data.items.length) return <Empty title="Nothing watched yet">What you play shows up here, newest first.</Empty>;
+  const remove = async (item: WatchProgress) => {
+    setData({ items: data.items.filter((entry) => entry.key !== item.key) });
+    await api.forgetProgress(item.key).catch((failure: Error) => { toast(failure.message, 'error'); reload(); });
+  };
+  return (
+    <div className="history" role="list">
+      {data.items.map((item) => {
+        const finished = item.duration > 0 && item.position / item.duration >= 0.92;
+        const code = item.type === 'series' ? `S${pad(item.season!)}E${pad(item.episode!)}` : '';
+        const to = `/watch/${item.type}/${item.imdbId}${item.type === 'series' ? `?s=${item.season}&e=${item.episode}` : ''}`;
+        const left = item.duration > 1 ? Math.max(1, Math.round((item.duration - item.position) / 60)) : 0;
+        return (
+          <div key={item.key} className="history-row" role="listitem">
+            <Link to={to} className="still" aria-label={`${finished ? 'Watch again' : 'Resume'} ${item.title} ${code}`}>
+              {(item.background || item.poster) && <img src={item.background || item.poster} alt="" loading="lazy" />}
+              {!finished && item.duration > 1 && <i className="watched" aria-hidden="true"><b style={{ width: `${Math.min(100, (item.position / item.duration) * 100)}%` }} /></i>}
+            </Link>
+            <Link to={`/title/${item.type}/${item.imdbId}${item.type === 'series' ? `?season=${item.season}` : ''}`} className="text">
+              <b className="truncate">{item.title}</b>
+              <span className="truncate">{[code, item.episodeTitle].filter(Boolean).join(' · ') || 'Movie'}</span>
+            </Link>
+            <span className="when">{finished ? <><Check size={13} strokeWidth={3} /> Watched</> : left ? `${left} min left` : 'Started'}<small>{ago(item.updatedAt)}</small></span>
+            <button className="btn ghost sm icon" onClick={() => void remove(item)} aria-label={`Remove ${item.title} ${code} from history`} title="Remove from history"><X size={14} /></button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function LibraryPage() {
   const toast = useToast();
   const { navigate } = useRouter();
   const { data, error, reload, setData } = useAsync(() => api.library(), []);
-  const [tabParam, setTab] = useQueryState<'series' | 'movie' | 'list'>('tab', 'series');
-  const tab = tabParam === 'movie' || tabParam === 'list' ? tabParam : 'series';
+  const [tabParam, setTab] = useQueryState<'series' | 'movie' | 'list' | 'history'>('tab', 'series');
+  const tab = tabParam === 'movie' || tabParam === 'list' || tabParam === 'history' ? tabParam : 'series';
   const [query, setQuery] = useState('');
   const [fixing, setFixing] = useState<LibrarySummary | null>(null);
   usePolling(() => { api.library().then(setData, () => undefined); }, 3000, Boolean(data?.scanning));
@@ -144,8 +181,8 @@ export function LibraryPage() {
       {!data && !error && <Loading />}
       {data && (
         <>
-          <TabBar value={tab} onChange={setTab} tabs={[{ value: 'series', label: 'Shows', count: shows.length }, { value: 'movie', label: 'Movies', count: movies.length }, { value: 'list', label: 'My list' }]} />
-          {tab === 'list' ? <SavedList /> : (
+          <TabBar value={tab} onChange={setTab} tabs={[{ value: 'series', label: 'Shows', count: shows.length }, { value: 'movie', label: 'Movies', count: movies.length }, { value: 'list', label: 'My list' }, { value: 'history', label: 'History' }]} />
+          {tab === 'list' ? <SavedList /> : tab === 'history' ? <History /> : (
             <>
               <div className="toolbar">
                 <input className="input filter" placeholder={`Filter ${tab === 'series' ? 'shows' : 'movies'}`} value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Filter the library" />

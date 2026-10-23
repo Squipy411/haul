@@ -6,7 +6,7 @@ import { ListButton, TrailerButton } from '../components/Extras';
 import { FollowControl } from '../components/Follow';
 import { Hero } from '../components/Hero';
 import { Availability, Formats, ReleaseTable, packLine, sizeOf } from '../components/Releases';
-import { Empty, ErrorNote, Loading, Menu, Picker, Sheet, TabBar, Toggle, join } from '../components/ui';
+import { Empty, ErrorNote, Loading, Menu, Picker, PosterCard, Sheet, TabBar, Toggle, join } from '../components/ui';
 import { Link, airDate, bytes, episodeRange, useAsync, usePolling, useRouter, useToast } from '../lib';
 import { diskFor, useCrumb, useStatus } from '../shell';
 
@@ -528,6 +528,42 @@ function PlayButton({ meta, resume }: { meta: Meta; resume?: WatchProgress }) {
   );
 }
 
+/**
+ * Popular titles that share the most genres with this one. Fetched only when the row comes near the
+ * screen, so opening a title costs nothing extra.
+ */
+function MoreLikeThis({ meta }: { meta: Meta }) {
+  const anchor = useRef<HTMLElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const node = anchor.current;
+    if (!node || near) return;
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) setNear(true); }, { rootMargin: '600px 0px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near]);
+  const genres = (meta.genres ?? []).slice(0, 2);
+  const similar = useAsync(async () => {
+    if (!near || !genres.length) return [];
+    const lists = await Promise.all(genres.map((genre) => api.catalog(meta.type, 'top', { genre }).then((result) => result.items, () => [])));
+    const shared = (item: { genres?: string[] }) => (item.genres ?? []).filter((genre) => meta.genres?.includes(genre)).length;
+    const seen = new Set([meta.id]);
+    const merged = lists.flat().filter((item) => !seen.has(item.id) && seen.add(item.id));
+    // Most genres in common first; the catalog's own popularity order breaks ties.
+    return merged.map((item, order) => ({ item, order, score: shared(item) })).sort((a, b) => b.score - a.score || a.order - b.order).slice(0, 18).map(({ item }) => item);
+  }, [near, meta.id]);
+  return (
+    <section ref={anchor} className="more-like">
+      {similar.data && similar.data.length > 0 && (
+        <>
+          <div className="section-title"><h2>More like this</h2></div>
+          <div className="shelf">{similar.data.map((item) => <PosterCard key={item.id} item={item} />)}</div>
+        </>
+      )}
+    </section>
+  );
+}
+
 /** A film's "…" menu: mark it watched (or not) without playing it. */
 function MovieMore({ meta, onWatched }: { meta: Meta; onWatched: () => void }) {
   const toast = useToast();
@@ -591,6 +627,7 @@ export function TitlePage({ type, id }: { type: MediaType; id: string }) {
         {meta.ownedMovie && <span className="pill positive" style={{ alignSelf: 'center' }}>In your library</span>}
       </Hero>
       {meta.type === 'series' ? <SeriesView key={meta.id} meta={meta} onWatched={resume.reload} /> : <MovieView meta={meta} />}
+      <MoreLikeThis key={`more-${meta.id}`} meta={meta} />
     </div>
   );
 }

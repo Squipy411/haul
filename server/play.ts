@@ -17,7 +17,8 @@ interface Deps {
   search: SearchService;
   torbox: Torbox;
   media: MediaTools;
-  progress: ProgressStore;
+  /** The watching of whoever this browser is (profiles). */
+  progress: (ctx: Context) => ProgressStore;
   apiKey: () => string;
 }
 
@@ -334,7 +335,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       subtitle: type === 'series' ? `S${pad(season!)}E${pad(episode!)}${entry?.title ? ` · ${entry.title}` : ''}` : meta.year ? String(meta.year) : undefined,
       poster: meta.poster,
       background: entry?.thumbnail ?? meta.background,
-      resume: progress.resumeAt(key),
+      resume: progress(ctx).resumeAt(key),
       next: type === 'series' ? nextEpisode(meta, season!, episode!) : undefined
     };
 
@@ -407,7 +408,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
       prepared.set(key, Date.now());
       // resolveTorbox warms the list and the search on its way; it stops short of adding a torrent.
       const work = body.stream
-        ? resolveTorbox(type, imdbId, season, episode, undefined, false, wantsFrom(body)).then((found) => warmStream(found.stream.hls_url, progress.resumeAt(progressKey(type, imdbId, season, episode)) ?? 0))
+        ? resolveTorbox(type, imdbId, season, episode, undefined, false, wantsFrom(body)).then((found) => warmStream(found.stream.hls_url, progress(ctx).resumeAt(progressKey(type, imdbId, season, episode)) ?? 0))
         : Promise.all([torrents(), deps.catalog.meta(type, imdbId), bestCached(type, imdbId, season, episode)]);
       work.catch(() => undefined);
     }
@@ -514,7 +515,7 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     const episode = type === 'series' ? Number(body.episode) : undefined;
     if (type === 'series' && (!Number.isInteger(season) || !Number.isInteger(episode))) throw new HttpError(400, 'Bad progress');
     const text = (value: unknown, max = 200) => (typeof value === 'string' ? value.slice(0, max) : undefined);
-    const saved = progress.save({
+    const saved = progress(ctx).save({
       key: progressKey(type, imdbId, season, episode), type, imdbId, season, episode,
       title: text(body.title) ?? imdbId, episodeTitle: text(body.episodeTitle),
       poster: text(body.poster, 500), background: text(body.background, 500),
@@ -541,32 +542,34 @@ export function registerPlay(router: Router, deps: Deps): HlsJobs {
     targets.sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0));
     for (const target of targets) {
       const key = progressKey(type, imdbId, target.season, target.episode);
-      if (body.watched === false) { progress.remove(key); continue; }
-      const duration = progress.get(key)?.duration || 1;
-      progress.save({
+      if (body.watched === false) { progress(ctx).remove(key); continue; }
+      const duration = progress(ctx).get(key)?.duration || 1;
+      progress(ctx).save({
         key, type, imdbId, season: target.season, episode: target.episode,
         title: text(body.title) ?? imdbId, episodeTitle: target.title, poster: text(body.poster, 500), background: text(body.background, 500),
         position: duration, duration
       });
     }
-    ctx.json(200, { items: progress.forTitle(type, imdbId) });
+    ctx.json(200, { items: progress(ctx).forTitle(type, imdbId) });
   });
 
-  router.get('/api/progress/title/:type/:id', (ctx) => ctx.json(200, { items: progress.forTitle(ctx.params.type === 'series' ? 'series' : 'movie', ctx.params.id!) }));
+  router.get('/api/progress/history', (ctx) => ctx.json(200, { items: progress(ctx).history() }));
 
-  router.delete('/api/progress/:key', (ctx) => { progress.remove(ctx.params.key!); ctx.json(200, { ok: true }); });
+  router.get('/api/progress/title/:type/:id', (ctx) => ctx.json(200, { items: progress(ctx).forTitle(ctx.params.type === 'series' ? 'series' : 'movie', ctx.params.id!) }));
+
+  router.delete('/api/progress/:key', (ctx) => { progress(ctx).remove(ctx.params.key!); ctx.json(200, { ok: true }); });
 
   /** Unfinished titles, and for shows you finished an episode of, the next one. */
   router.get('/api/continue', async (ctx) => {
     // Shows' episode lists are looked up together, not one after another.
-    const found = await Promise.all(progress.recent().map(async (entry): Promise<WatchProgress | null> => {
+    const found = await Promise.all(progress(ctx).recent().map(async (entry): Promise<WatchProgress | null> => {
       if (!isFinished(entry)) return entry;
       if (entry.type !== 'series') return null;
       try {
         const meta = await deps.catalog.meta('series', entry.imdbId);
         const next = nextEpisode(meta, entry.season!, entry.episode!);
         if (!next) return null;
-        const saved = progress.get(progressKey('series', entry.imdbId, next.season, next.episode));
+        const saved = progress(ctx).get(progressKey('series', entry.imdbId, next.season, next.episode));
         return saved && !isFinished(saved) ? saved : {
           ...entry,
           key: progressKey('series', entry.imdbId, next.season, next.episode),

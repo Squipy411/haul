@@ -147,6 +147,10 @@ export interface Status {
   twoFactor: boolean;
   /** How this browser reaches Haul: over HTTPS, and from the internet rather than the home network. */
   access?: { https: boolean; fromInternet: boolean };
+  /** Everyone in the house, who this browser is, and whether it has picked (with 2+ profiles, it's asked). */
+  profiles: Profile[];
+  profile: Profile | null;
+  profileChosen: boolean;
   activeDownloads: number;
   /** Bytes per second across downloads to this machine right now. */
   transferSpeed: number;
@@ -456,6 +460,15 @@ export interface PlaySession {
   source?: string;
   /** TorBox stream id, for switching tracks. */
   stream?: string;
+}
+
+/** Someone in the house, with their own Continue watching, My list and progress. */
+export interface Profile {
+  id: string;
+  name: string;
+  /** Avatar colour, e.g. #4cb3f0. */
+  color: string;
+  createdAt: number;
 }
 
 /** A title saved to "My list". */

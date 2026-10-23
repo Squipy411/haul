@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Meta, MediaType, NewEpisodes, Release, SettingsPatch, SetupRequest, Status } from '../shared/types.js';
 import { addonUrls } from './addon.js';
-import type { Watchlist } from './watchlist.js';
+import type { Profiles } from './profiles.js';
 import { type Auth, clientIp, describeDevice, isFromInternet, isHttps, validPassword } from './auth.js';
 import { checkCode, newSecret, otpauthUrl } from './totp.js';
 import * as catalog from './catalog.js';
@@ -31,7 +31,7 @@ interface Deps {
   updates: UpdateChecker;
   follows: FollowService;
   notifier: Notifier;
-  watchlist: Watchlist;
+  profiles: Profiles;
 }
 
 /** Routes that answer before sign-in. Setup routes also check that setup is actually open. */
@@ -60,7 +60,7 @@ function aired(released?: string): boolean {
 }
 
 export function registerApi(router: Router, deps: Deps): void {
-  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, watchlist } = deps;
+  const { settings, auth, torbox, search, jobs, library, options, updates, follows, notifier, profiles } = deps;
 
   const withOwnership = (meta: Meta): Meta => {
     if (meta.type === 'series') {
@@ -88,6 +88,9 @@ export function registerApi(router: Router, deps: Deps): void {
       torboxRefused: authenticated ? torbox.refused : false,
       twoFactor: Boolean(value.totpSecret),
       access: authenticated ? { https: isHttps(ctx), fromInternet: isFromInternet(ctx) } : undefined,
+      profiles: authenticated ? profiles.list() : [],
+      profile: authenticated ? profiles.current(ctx) : null,
+      profileChosen: authenticated ? profiles.chosen(ctx) : false,
       // Signed-out visitors learn nothing about the library or queue.
       activeDownloads: authenticated ? jobs.activeCount() : 0,
       transferSpeed: authenticated ? jobs.jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0) : 0,
@@ -338,16 +341,35 @@ export function registerApi(router: Router, deps: Deps): void {
 
   router.get('/api/meta/:type/:id', async (ctx) => {
     const meta = await catalog.meta(asType(ctx.params.type), asImdb(ctx.params.id));
-    ctx.json(200, { ...withOwnership(meta), follow: follows.find(meta.type, meta.id) ?? null, inList: watchlist.has(meta.type, meta.id) });
+    ctx.json(200, { ...withOwnership(meta), follow: follows.find(meta.type, meta.id) ?? null, inList: profiles.watchlist(ctx).has(meta.type, meta.id) });
+  });
+
+  // --- Profiles ---------------------------------------------------------------------
+  router.get('/api/profiles', (ctx) => ctx.json(200, { profiles: profiles.list(), current: profiles.current(ctx).id }));
+  router.post('/api/profiles', async (ctx) => {
+    const body = await ctx.body();
+    ctx.json(200, profiles.create(body.name, body.color));
+  });
+  router.post('/api/profiles/select', async (ctx) => {
+    const body = await ctx.body();
+    ctx.json(200, profiles.select(ctx, String(body.id ?? '')));
+  });
+  router.put('/api/profiles/:id', async (ctx) => {
+    const body = await ctx.body();
+    ctx.json(200, profiles.update(ctx.params.id!, { name: body.name, color: body.color }));
+  });
+  router.delete('/api/profiles/:id', (ctx) => {
+    profiles.remove(ctx.params.id!);
+    ctx.json(200, { ok: true });
   });
 
   // --- My list --------------------------------------------------------------------
-  router.get('/api/watchlist', (ctx) => ctx.json(200, { items: watchlist.list() }));
+  router.get('/api/watchlist', (ctx) => ctx.json(200, { items: profiles.watchlist(ctx).list() }));
 
   router.post('/api/watchlist', async (ctx) => {
     const body = await ctx.body();
     const text = (value: unknown, max = 500) => (typeof value === 'string' && value ? value.slice(0, max) : undefined);
-    const item = watchlist.add({
+    const item = profiles.watchlist(ctx).add({
       type: asType(body.type), imdbId: asImdb(body.imdbId), title: text(body.title, 200) ?? body.imdbId,
       poster: text(body.poster), background: text(body.background), releaseInfo: text(body.releaseInfo, 40)
     });
@@ -355,7 +377,7 @@ export function registerApi(router: Router, deps: Deps): void {
   });
 
   router.delete('/api/watchlist/:type/:id', (ctx) => {
-    watchlist.remove(asType(ctx.params.type), asImdb(ctx.params.id));
+    profiles.watchlist(ctx).remove(asType(ctx.params.type), asImdb(ctx.params.id));
     ctx.json(200, { ok: true });
   });
 

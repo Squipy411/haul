@@ -221,6 +221,10 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
   const [hover, setHover] = useState<{ x: number; time: number } | null>(null);
   const [upNextDismissed, setUpNextDismissed] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [autoSkip, setAutoSkip] = useState(() => { try { return localStorage.getItem('haul.autoskip') === '1'; } catch { return false; } });
+  /** After three episodes in a row that played on their own, ask before starting a fourth. */
+  const [stillWatching, setStillWatching] = useState(false);
+  const touched = useRef(false);
   const [panel, setPanel] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
@@ -535,6 +539,7 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      touched.current = true;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       // Menus keep their keys; a focused button keeps Space and Enter, the volume slider its arrows.
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -584,15 +589,40 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
     else if (!session.next) setEnded(true);
   };
 
+  // Episodes that started by themselves since you last touched anything, across episodes in this tab.
+  const autoPlays = {
+    read: () => { try { return Number(sessionStorage.getItem('haul.autoplays') ?? 0); } catch { return 0; } },
+    write: (value: number) => { try { sessionStorage.setItem('haul.autoplays', String(value)); } catch { /* storage blocked */ } },
+    /** Marks the next episode as started by itself; anything else that opens the player starts the count again. */
+    handOff: () => { try { sessionStorage.setItem('haul.autostart', '1'); } catch { /* storage blocked */ } },
+    startedByItself: () => { try { const auto = sessionStorage.getItem('haul.autostart') === '1'; sessionStorage.removeItem('haul.autostart'); return auto; } catch { return false; } }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!autoPlays.startedByItself()) autoPlays.write(0); }, []);
   useEffect(() => {
     if (countdown === null) return;
-    if (countdown <= 0) { playNext(); return; }
+    if (countdown <= 0) {
+      const inARow = touched.current ? 0 : autoPlays.read();
+      if (inARow >= 2) { setCountdown(null); setStillWatching(true); return; }
+      autoPlays.write(inARow + 1);
+      autoPlays.handOff();
+      playNext();
+      return;
+    }
     const timer = window.setTimeout(() => setCountdown((value) => (value === null ? null : value - 1)), 1000);
     return () => window.clearTimeout(timer);
   }, [countdown, playNext]);
 
   const activeCues = useMemo(() => cues.filter((cue) => time >= cue.start && time <= cue.end), [cues, time]);
   const inIntro = session.intro && time >= session.intro.start && time < session.intro.end - 2;
+  // With "Skip intros" on, the opening titles are skipped once, as they start.
+  const skippedIntro = useRef(false);
+  useEffect(() => {
+    if (!autoSkip || !inIntro || skippedIntro.current || !session.intro) return;
+    skippedIntro.current = true;
+    seek(session.intro.end);
+    toast('Intro skipped');
+  }, [autoSkip, inIntro, seek, session.intro, toast]);
   const nearEnd = session.next && duration > 0 && duration - time < 35 && !upNextDismissed;
   // Have the next episode ready by the time this one ends.
   const nextSoon = Boolean(session.next && duration > 0 && duration - time < 120);
@@ -613,7 +643,8 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
       ref={shell}
       className={`player ${visible || !playing ? 'show-controls' : 'hide-controls'}`}
       onPointerMove={(event) => { if (event.pointerType === 'mouse') reveal(); }}
-      onPointerDown={(event) => { pointerKind.current = event.pointerType; if (event.pointerType !== 'mouse' && event.target !== video.current) reveal(); }}
+      onPointerDown={(event) => { touched.current = true; pointerKind.current = event.pointerType; if (event.pointerType !== 'mouse' && event.target !== video.current) reveal(); }}
+      onKeyDown={() => { touched.current = true; }}
     >
       <video
         ref={video}
@@ -683,14 +714,25 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
         </div>
       </div>
 
-      {inIntro && <button className="btn player-skip" onClick={() => seek(session.intro!.end)}>Skip intro</button>}
+      {inIntro && !autoSkip && <button className="btn player-skip" onClick={() => seek(session.intro!.end)}>Skip intro</button>}
+
+      {stillWatching && (
+        <div className="player-message player-end">
+          <h1>Still watching?</h1>
+          <p>The last few episodes played on their own, so Haul stopped before starting {session.next ? `S${String(session.next.season).padStart(2, '0')}E${String(session.next.episode).padStart(2, '0')}` : 'another'}.</p>{/* taste-skill-ignore: episode code */}
+          <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button className="btn primary" onClick={() => { autoPlays.write(0); playNext(); }}>Keep watching</button>
+            <button className="btn" onClick={onLeave}>Back to {session.title}</button>
+          </div>
+        </div>
+      )}
 
       {(nearEnd || countdown !== null) && session.next && (
         <div className="player-next">
           <span className="faint">Up next</span>
           <b className="truncate">S{String(session.next.season).padStart(2, '0')}E{String(session.next.episode).padStart(2, '0')} · {session.next.title}</b>{/* taste-skill-ignore: episode code */}
           <div className="row">
-            <button className="btn primary sm" onClick={playNext}>{countdown !== null ? `Play in ${countdown}` : 'Play now'}</button>
+            <button className="btn primary sm" onClick={() => { autoPlays.write(0); playNext(); }}>{countdown !== null ? `Play in ${countdown}` : 'Play now'}</button>
             <button className="btn ghost sm" onClick={() => { setUpNextDismissed(true); setCountdown(null); }}>Hide</button>
           </div>
         </div>
@@ -774,6 +816,9 @@ function Player({ session, onLeave, onFailedLocal }: { session: PlaySession; onL
                   </>
                 )}
                 <DropdownMenu.Separator className="player-menu-rule" />
+                <DropdownMenu.CheckboxItem className="popover-item" checked={autoSkip} onCheckedChange={(value) => { setAutoSkip(value); try { localStorage.setItem('haul.autoskip', value ? '1' : '0'); } catch { /* storage blocked */ } }} onSelect={(event) => event.preventDefault()}>
+                  Skip intros automatically<DropdownMenu.ItemIndicator><Check size={14} /></DropdownMenu.ItemIndicator>
+                </DropdownMenu.CheckboxItem>
                 <DropdownMenu.Item className="popover-item" onSelect={() => { setPanel(false); setVersionsOpen(true); }}>Other versions…</DropdownMenu.Item>
                 <DropdownMenu.Item className="popover-item hide-touch" onSelect={() => setKeysOpen(true)}>Keyboard shortcuts<kbd className="faint">?</kbd></DropdownMenu.Item>
               </DropdownMenu.Content>
