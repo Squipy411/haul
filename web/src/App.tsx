@@ -210,12 +210,18 @@ function Shell({ status, children }: { status: Status; children: ReactNode }) {
                     {active} active
                   </Link>
                 )}
-                <div className="switcher" title={status.torboxConfigured ? 'TorBox account connected' : 'TorBox is not connected'}>
-                  <span className={`dot ${status.torboxConfigured ? 'on' : 'off'}`} />
+                <div className="switcher" title={status.torboxRefused ? "TorBox didn't accept your API key" : status.torboxConfigured ? 'TorBox account connected' : 'TorBox is not connected'}>
+                  <span className={`dot ${status.torboxConfigured && !status.torboxRefused ? 'on' : 'off'}`} />
                   <span className="label">TorBox</span>
                 </div>
               </div>
             </header>
+            {status.torboxRefused && !path.startsWith('/settings') && (
+              <div className="key-banner notice negative" role="alert">
+                TorBox didn't accept your API key, so streams and downloads can't start. It may have been reset.
+                <Link to="/settings">Paste a new key in Settings</Link>
+              </div>
+            )}
             {children}
           </div>
           <nav className="bottombar" aria-label="Main">

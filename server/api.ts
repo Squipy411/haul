@@ -82,6 +82,7 @@ export function registerApi(router: Router, deps: Deps): void {
       canRemovePassword: auth.canRemovePassword,
       setupComplete: Boolean(settings.value.torboxApiKey) && !auth.locked,
       torboxConfigured: torbox.configured,
+      torboxRefused: authenticated ? torbox.refused : false,
       // Signed-out visitors learn nothing about the library or queue.
       activeDownloads: authenticated ? jobs.activeCount() : 0,
       transferSpeed: authenticated ? jobs.jobs.reduce((sum, job) => sum + (job.status === 'downloading' ? job.speed : 0), 0) : 0,

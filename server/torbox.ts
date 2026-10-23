@@ -70,6 +70,12 @@ export class Torbox {
     return Boolean(this.key());
   }
 
+  /** The key TorBox last refused, until a call with it works again (or it's replaced). */
+  private refusedKey: string | null = null;
+  get refused(): boolean {
+    return this.refusedKey !== null && this.refusedKey === this.key();
+  }
+
   private async call<T>(pathname: string, init: RequestInit & { query?: Record<string, string | number | boolean | undefined> } = {}, keyOverride?: string): Promise<T> {
     const key = keyOverride ?? this.key();
     if (!key) throw new TorboxError('Add your TorBox API key in Settings first.', 'NO_KEY');
@@ -96,8 +102,14 @@ export class Torbox {
       throw new TorboxError(`TorBox returned HTTP ${response.status}.`, 'BAD_RESPONSE', response.status);
     }
     if (!response.ok || !body.success) {
+      // TorBox's own wording ("log in again or reset your token") is about its website, not Haul.
+      if (response.status === 401 || /token|auth/i.test(`${body.error ?? ''} ${body.detail ?? ''}`)) {
+        if (!keyOverride) this.refusedKey = key;
+        throw new TorboxError("TorBox didn't accept your API key. It may have been reset: copy it again from torbox.app/settings and paste it in Haul's Settings.", 'BAD_KEY', response.status);
+      }
       throw new TorboxError(body.detail || body.error || `TorBox returned HTTP ${response.status}.`, body.error || undefined, response.status);
     }
+    if (this.refusedKey === key) this.refusedKey = null;
     return body.data;
   }
 
@@ -107,9 +119,7 @@ export class Torbox {
       return { ok: true, email: user.email, plan: PLANS[user.plan ?? -1] ?? `Plan ${user.plan}`, expires: user.premium_expires_at ?? null };
     } catch (error) {
       const failure = error as TorboxError;
-      // TorBox's own wording ("log in again or reset your token") is about its website, not Haul.
-      const refused = failure.status === 401 || failure.status === 403 || /token|auth|api key/i.test(`${failure.code ?? ''} ${failure.message}`);
-      return { ok: false, error: refused ? "TorBox didn't accept that API key. Copy it again from torbox.app/settings, under API key, and paste it here." : failure.message };
+      return { ok: false, error: failure.code === 'BAD_KEY' ? "TorBox didn't accept that API key. Copy it again from torbox.app/settings, under API key, and paste it here." : failure.message };
     }
   }
 

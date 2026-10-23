@@ -7,7 +7,7 @@ import { optionsFromEnv } from '../server/config';
 import { JobManager } from '../server/jobs';
 import { parseRelease } from '../server/release';
 import { SettingsService } from '../server/settings';
-import type { Torbox } from '../server/torbox';
+import { type Torbox, TorboxError } from '../server/torbox';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
@@ -56,3 +56,18 @@ describe('shared TorBox torrents', () => {
     jobs.stop();
   });
 });
+
+describe('a refused TorBox key', () => {
+  it('waits for a working key instead of failing the download', async () => {
+    const { jobs } = setup();
+    const refused = new TorboxError("TorBox didn't accept your API key.", 'BAD_KEY', 403);
+    Object.assign((jobs as unknown as { deps: { torbox: Torbox } }).deps.torbox, { list: vi.fn(async () => { throw refused; }) });
+    const job = jobs.create({ meta, release, season: 1 });
+    await (jobs as unknown as { addToTorbox: (job: unknown) => Promise<void> }).addToTorbox(job);
+    expect(job.status).toBe('queued');
+    expect(job.note).toContain("didn't accept");
+    expect(job.nextAttemptAt).toBeGreaterThan(Date.now());
+    jobs.stop();
+  });
+});
+

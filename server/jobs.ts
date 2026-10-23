@@ -304,7 +304,7 @@ export class JobManager {
       if (failure.code === 'RATE_LIMIT') {
         job.nextAttemptAt = Date.now() + (failure.retryAfter ?? 60) * 1000;
         job.note = message;
-      } else if (failure.code === 'NETWORK' || failure.code === 'NO_KEY' || /active|limit|slot|cooldown/i.test(`${failure.code} ${message}`)) {
+      } else if (failure.code === 'NETWORK' || failure.code === 'NO_KEY' || failure.code === 'BAD_KEY' || /active|limit|slot|cooldown/i.test(`${failure.code} ${message}`)) {
         job.nextAttemptAt = Date.now() + 60_000;
         job.note = /active|slot/i.test(message) ? 'All your TorBox download slots are busy. Waiting for one to free up.' : message;
       } else {
@@ -426,7 +426,7 @@ export class JobManager {
         job.note = short;
         return;
       }
-      if (job.note?.startsWith('Waiting for free space')) job.note = undefined;
+      if (job.note?.startsWith('Waiting for free space') || job.note?.startsWith("TorBox didn't accept")) job.note = undefined;
       const url = await this.deps.torbox.downloadLink(job.torbox.id!, file.torboxFileId);
       await downloadToFile(url, part, {
         expectedSize: file.size || undefined,
@@ -444,6 +444,13 @@ export class JobManager {
       file.downloaded = file.size;
     } catch (error) {
       if (controller.signal.aborted) return;
+      // A refused key or no key isn't this file's fault: wait for a working one without using up retries.
+      if (error instanceof TorboxError && (error.code === 'BAD_KEY' || error.code === 'NO_KEY')) {
+        file.status = 'pending';
+        file.retryAt = Date.now() + 60_000;
+        job.note = error.message;
+        return;
+      }
       file.attempts += 1;
       file.error = (error as Error).message;
       if (file.attempts >= MAX_ATTEMPTS) file.status = 'failed';

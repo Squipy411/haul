@@ -137,6 +137,8 @@ export interface Status {
   canRemovePassword: boolean;
   setupComplete: boolean;
   torboxConfigured: boolean;
+  /** TorBox refused the saved key the last time Haul used it (reset or expired). */
+  torboxRefused?: boolean;
   activeDownloads: number;
   /** Bytes per second across downloads to this machine right now. */
   transferSpeed: number;

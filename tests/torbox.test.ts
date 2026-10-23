@@ -21,3 +21,29 @@ describe('Torbox.list', () => {
     expect(offsets.sort((a, b) => a - b)).toEqual([0, 1000, 2000]);
   });
 });
+
+describe('Torbox.account', () => {
+  it("explains a refused key in Haul's words, and an empty one as missing", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: false, error: 'BAD_TOKEN', detail: 'Your token is invalid or has expired. Please log in again or reset your token.' }), { status: 403 })));
+    const refused = await new Torbox(() => 'key').account();
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("didn't accept that API key");
+    const missing = await new Torbox(() => '').account();
+    expect(missing.error).toContain('Add your TorBox API key');
+  });
+});
+
+describe('Torbox.refused', () => {
+  it('remembers a refused key until a call with it works', async () => {
+    let refuse = true;
+    vi.stubGlobal('fetch', vi.fn(async () => (refuse
+      ? new Response(JSON.stringify({ success: false, error: 'BAD_TOKEN', detail: 'Your token is invalid.' }), { status: 403 })
+      : new Response(JSON.stringify({ success: true, data: [] }), { status: 200 }))));
+    const torbox = new Torbox(() => 'key');
+    await expect(torbox.list()).rejects.toThrow("didn't accept your API key");
+    expect(torbox.refused).toBe(true);
+    refuse = false;
+    await torbox.list();
+    expect(torbox.refused).toBe(false);
+  });
+});

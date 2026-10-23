@@ -149,7 +149,7 @@ export function Watch({ type, id }: { type: MediaType; id: string }) {
             <>
               <span className="spinner large" />
               <p>{source === 'torbox' || hash ? 'Asking TorBox for the stream…' : 'Getting it ready…'}</p>
-              {slowStart && <p className="faint" style={{ maxWidth: '44ch' }}>Finding a version TorBox has ready and adding it to your list. The first time can take up to 20 seconds; after that it starts in a second or two.</p>}
+              {slowStart && <p className="faint" style={{ maxWidth: '44ch' }}>{source === 'torbox' || hash ? 'TorBox is finding a ready version and adding it to your list. The first time can take up to 20 seconds; after that it starts in a second or two.' : 'Still working on it. Streaming something from TorBox for the first time can take up to 20 seconds; after that it starts in a second or two.'}</p>}
             </>
           )}
         </div>
