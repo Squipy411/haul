@@ -14,9 +14,11 @@ docker build -t ghcr.io/squipy411/haul:latest "$SRC_DIR"
 cp "$SRC_DIR/deploy/zimaos/docker-compose.yml" "$APP_DIR/docker-compose.yml"
 docker compose -f "$APP_DIR/docker-compose.yml" up -d --pull never
 echo "Waiting for Haul to start…"
-for i in $(seq 1 30); do
-  if wget -qO- http://127.0.0.1:60700/health >/dev/null 2>&1; then
-    echo "Haul is running: http://$(hostname -I 2>/dev/null | awk '{print $1}'):60700"
+for i in $(seq 1 45); do
+  if [ "$(docker inspect -f '{{.State.Health.Status}}' haul 2>/dev/null)" = "healthy" ]; then
+    # Let ZimaOS pick up the app so its tile appears on the dashboard.
+    systemctl restart zimaos-app-management.service 2>/dev/null || systemctl restart casaos-app-management.service 2>/dev/null || true
+    echo "Haul is running on port 60700."
     exit 0
   fi
   sleep 2
