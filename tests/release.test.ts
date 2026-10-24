@@ -99,3 +99,14 @@ describe('foreign-only releases', () => {
     expect(parseRelease('Game.of.Thrones.S01E01.1080p.BluRay.x264-DEMAND').languages).toEqual([]);
   });
 });
+
+describe('ranking languages', () => {
+  it('puts an English release ahead of a bigger one that leads with a dub', async () => {
+    const { scoreRelease } = await import('../server/search');
+    const quality = { preferred: '1080p' as const, maxEpisodeGB: 0, maxMovieGB: 0, preferCached: true, allowHdr: true, allowUpscaled: false, preferLarger: true, blockedWords: [] };
+    const release = (name: string, totalSize: number, seeders: number) => ({ hash: name, name, info: parseRelease(name), kind: 'season' as const, cached: true, origin: 'test', totalSize, seeders, packEpisodes: Array.from({ length: 10 }, (_, index) => index + 1) });
+    const dubbed = release('Разделение / Severance / Сезон: 2 [2025 WEB-DL 1080p] Dub + 6 x MVO + Original + Sub (Rus Eng)', 52.4 * 1024 ** 3, 219);
+    const english = release('Severance (2021) S02 (1080p ATVP WEB-DL x265 10bit EAC3 5.1 Silence) [QxR]', 16.8 * 1024 ** 3, 369);
+    expect(scoreRelease(english, quality, 10)).toBeGreaterThan(scoreRelease(dubbed, quality, 10));
+  });
+});

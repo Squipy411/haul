@@ -5,6 +5,7 @@ import { jobProgress } from '../../../shared/jobs';
 import { SERVICE_NAMES } from '../../../shared/services';
 import { api, preparePlay, rememberPreview } from '../api';
 import { ListButton, TrailerButton } from '../components/Extras';
+import { GetReady } from '../components/GetReady';
 import { Hero } from '../components/Hero';
 import { ErrorNote, Figure, PosterCard, join } from '../components/ui';
 import { Link, bytes, duration, pad, speed, useAsync, usePolling } from '../lib';
@@ -272,6 +273,7 @@ export function Discover() {
       {data ? <Featured rows={data.rows} resume={resume.data?.items ?? []} /> : !error && <div className="hero large skeleton-hero" />}
       <ContinueWatching />
       <div className="home-top">
+        <GetReady />
         <Transfers jobs={downloads.data?.jobs ?? []} />
       </div>
       <MyList />

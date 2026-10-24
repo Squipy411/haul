@@ -321,8 +321,11 @@ export function SettingsPage() {
   const toast = useToast();
   const status = useStatus();
   const [hoverTrailers, setHoverTrailers] = useState(() => hoverPreviews.enabled());
-  // Opened from the profile menu: go straight to Profiles.
-  useEffect(() => { if (window.location.hash === '#profiles') window.setTimeout(() => document.getElementById('profiles')?.scrollIntoView({ block: 'start' }), 400); }, []);
+  // Opened with a section in the address (Profiles from the profile menu, others from Home): go to it.
+  useEffect(() => {
+    const section = window.location.hash.slice(1);
+    if (/^[a-z-]+$/.test(section)) window.setTimeout(() => document.getElementById(section)?.scrollIntoView({ block: 'start' }), 400);
+  }, []);
   const { data, error, reload, setData } = useAsync(() => api.settings(), []);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -423,7 +426,7 @@ export function SettingsPage() {
           </Field>
         </Section>
 
-        <Section title="Folders" description="Where films and episodes are saved, and other folders to play from: a second drive, a NAS share, USB drives. In Docker these paths are inside the container, usually under /media; on ZimaOS, connected network shares and USB drives are under /drives.">
+        <Section id="folders" title="Folders" description="Where films and episodes are saved, and other folders to play from: a second drive, a NAS share, USB drives. In Docker these paths are inside the container, usually under /media; on ZimaOS, connected network shares and USB drives are under /drives.">
           <div className="two">
             <Field id="dir-movies" label="Movies"><div className="input-pick"><input id="dir-movies" className="input code" value={draft.moviesDir} onChange={(event) => set((value) => ({ ...value, moviesDir: event.target.value }))} /><button className="btn sm" onClick={() => setPicking({ field: 'moviesDir', title: 'Folder for movies' })}>Choose</button></div></Field>
             <Field id="dir-tv" label="Shows"><div className="input-pick"><input id="dir-tv" className="input code" value={draft.tvDir} onChange={(event) => set((value) => ({ ...value, tvDir: event.target.value }))} /><button className="btn sm" onClick={() => setPicking({ field: 'tvDir', title: 'Folder for shows' })}>Choose</button></div></Field>
@@ -514,7 +517,7 @@ export function SettingsPage() {
           <SwitchRow title={`Remove from ${serviceName} when finished`} description={`Keeps your ${serviceName} list tidy.`} checked={draft.downloads.removeFromTorbox} onChange={(removeFromTorbox) => set((value) => ({ ...value, downloads: { ...value.downloads, removeFromTorbox } }))} />
         </Section>
 
-        <Section title="Notifications" description="Haul tells your phone the moment a torrent is out for something you follow, not when it airs. It checks every 5 minutes on the day an episode comes out.">
+        <Section id="notifications" title="Notifications" description="Haul tells your phone the moment a torrent is out for something you follow, not when it airs. It checks every 5 minutes on the day an episode comes out.">
           <SwitchRow title="Send notifications" description="Off until you turn it on. Alerts go to the ntfy topic below and to Discord, if you add a webhook." checked={draft.notifications.enabled} onChange={(enabled) => setNotify({ enabled })} />
           <div className="divider" />
           <div className="phone-setup">
@@ -579,7 +582,7 @@ export function SettingsPage() {
           <ProfilesEditor profiles={status?.profiles ?? []} current={status?.profile ?? null} onChange={() => window.dispatchEvent(new Event('haul:refresh-status'))} />
         </Section>
 
-        <Section title="Nuvio and Stremio" description="Your library as an addon. Anyone with the address can play your files, so keep it private.">
+        <Section id="addon" title="Nuvio and Stremio" description="Your library as an addon. Anyone with the address can play your files, so keep it private.">
           <SwitchRow title="Share my library as an addon" checked={draft.addon.enabled} onChange={(enabled) => set((value) => ({ ...value, addon: { ...value.addon, enabled } }))} />
           <div className="two">
             <Field id="a-name" label="Name in Nuvio"><input id="a-name" className="input" value={draft.addon.name} onChange={(event) => set((value) => ({ ...value, addon: { ...value.addon, name: event.target.value } }))} /></Field>

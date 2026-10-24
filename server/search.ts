@@ -80,6 +80,9 @@ export function scoreRelease(release: Omit<Release, 'score'>, quality: Quality, 
   if (release.kind === 'season') score += 2;
   const foreignOnly = isForeignOnly(info);
   if (foreignOnly) score -= 30;
+  // Several languages often means a dub plays first (Russian voice-overs with the original as track 2),
+  // so a bigger multi-language pack shouldn't beat the English release.
+  else if (info.languages.some((language) => language !== 'EN')) score -= 14;
   const perItem = release.kind === 'movie' || release.kind === 'episode'
     ? release.fileSize ?? release.totalSize
     : release.fileSize ?? (release.totalSize ? release.totalSize / Math.max(1, episodeCount) : undefined);

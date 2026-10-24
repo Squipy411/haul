@@ -597,6 +597,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; text-wrap: balance; }
 .hero-scrim { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.62) 34%, rgba(0, 0, 0, 0) 70%), linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 46%); } /* taste-skill-ignore: neutral scrim over a photo */
 .hero-content { position: relative; z-index: 1; display: grid; gap: 14px; width: min(660px, 100%); padding: 0 var(--gutter) 42px; }
 .hero-logo img { display: block; max-width: min(440px, 82%); max-height: 150px; object-fit: contain; object-position: left bottom; }
+/* A black logo would vanish on the dark backdrop: it's shown in white instead. */
+.hero-logo.dark img { filter: brightness(0) invert(1); }
 .hero-title { font-size: clamp(32px, 4.2vw, 52px); line-height: 1.04; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
 .hero-facts { font-size: 14px; color: rgba(255, 255, 255, 0.78); font-variant-numeric: tabular-nums; }
 .hero-description { display: -webkit-box; margin: 0; max-width: 58ch; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; color: rgba(255, 255, 255, 0.88); font-size: 15px; line-height: 1.55; }
@@ -878,3 +880,21 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .folder-health-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; }
 .folder-health-row b { font-weight: 500; }
 @media (max-width: 600px) { .folder-health-row { grid-template-columns: auto minmax(0, 1fr); } .folder-health-row > :last-child { grid-column: 2; } }
+
+/* ---------- Home: getting the most out of Haul ---------- */
+.get-ready .card-head { align-items: flex-start; margin-bottom: 10px; }
+.get-ready-bar { height: 3px; margin-bottom: 8px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+.get-ready-bar i { display: block; height: 100%; background: #fff; transition: width 0.6s var(--ease-out); }
+.get-ready-steps { display: grid; margin: 0; padding: 0; list-style: none; }
+.get-ready-steps li { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--rule); animation: rise-in 0.4s var(--ease-out) backwards; }
+.get-ready-steps li:first-child { border-top: 0; }
+.get-ready-steps li:nth-child(2) { animation-delay: 50ms; } .get-ready-steps li:nth-child(3) { animation-delay: 100ms; } .get-ready-steps li:nth-child(4) { animation-delay: 150ms; } .get-ready-steps li:nth-child(5) { animation-delay: 200ms; }
+.get-ready-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 999px; background: var(--raised); color: var(--muted); }
+.get-ready-steps li.done .get-ready-icon { background: var(--pill-positive-bg); color: var(--positive); }
+.get-ready-text { display: grid; gap: 2px; min-width: 0; }
+.get-ready-text b { font-weight: 500; }
+.get-ready-text span { font-size: 13px; line-height: 18px; color: var(--muted); }
+.get-ready-steps li.done .get-ready-text b { color: var(--muted); text-decoration: line-through; text-decoration-color: #555; }
+.get-ready-steps li.done .get-ready-text span { display: none; }
+.get-ready-action { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 600px) { .get-ready-steps li { grid-template-columns: 36px minmax(0, 1fr); } .get-ready-action { grid-column: 2; justify-content: flex-start; } }
