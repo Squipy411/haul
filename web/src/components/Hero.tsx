@@ -42,7 +42,9 @@ export function Hero({ background, logo, title, facts, description, children, fo
 }) {
   const [noLogo, setNoLogo] = useState(false);
   const [darkLogo, setDarkLogo] = useState(false);
-  const readable = Boolean(logo && READABLE.test(logo));
+  // Some logos come through a redirect without the header that allows reading them: those load plainly.
+  const [plainLogo, setPlainLogo] = useState(false);
+  const readable = Boolean(logo && READABLE.test(logo)) && !plainLogo;
   const [noBackdrop, setNoBackdrop] = useState(false);
   return (
     <section className={`hero ${size}`}>
@@ -52,7 +54,14 @@ export function Hero({ background, logo, title, facts, description, children, fo
         {logo && !noLogo
           ? (
             <h1 className={`hero-logo ${darkLogo ? 'dark' : ''}`}>
-              <img src={logo} alt={title} crossOrigin={readable ? 'anonymous' : undefined} onError={() => setNoLogo(true)} onLoad={readable ? (event: SyntheticEvent<HTMLImageElement>) => setDarkLogo(isDark(event.currentTarget)) : undefined} />
+              <img
+                key={readable ? 'read' : 'plain'}
+                src={logo}
+                alt={title}
+                crossOrigin={readable ? 'anonymous' : undefined}
+                onError={() => (readable ? setPlainLogo(true) : setNoLogo(true))}
+                onLoad={readable ? (event: SyntheticEvent<HTMLImageElement>) => setDarkLogo(isDark(event.currentTarget)) : undefined}
+              />
             </h1>
           )
           : <h1 className="hero-title">{title}</h1>}

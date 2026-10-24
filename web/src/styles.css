@@ -623,7 +623,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; text-wrap: balance; }
 
 /* ---------- watch-first: episodes ---------- */
 .season-bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px 24px; flex-wrap: wrap; margin-top: 26px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
-.season-bar > .row { padding-bottom: 10px; }
+.season-bar > .row { padding-bottom: 10px; row-gap: 6px; }
+@media (max-width: 600px) { .season-summary { flex-basis: 100%; } }
 .season-bar .tabs-list { border-bottom: 0; }
 .episode-list { display: grid; }
 .episode { display: grid; grid-template-columns: 240px minmax(0, 1fr) auto; gap: 18px 20px; align-items: start; padding: 18px 0; border-bottom: 1px solid var(--rule); }

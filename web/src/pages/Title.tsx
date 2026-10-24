@@ -406,7 +406,6 @@ function SeriesView({ meta, onWatched }: { meta: Meta; onWatched: () => void }) 
             const count = meta.episodes.filter((episode) => episode.season === value).length;
             return { value, label: seasonName(value), hint: `${count} ep` };
           })} />
-          <span className="muted num">{summary}</span>
           <Menu
             label={`More for ${seasonName(season)}`}
             trigger={<button className="btn ghost sm icon" aria-label={`More for ${seasonName(season)}`}><Ellipsis size={16} /></button>}
@@ -415,6 +414,8 @@ function SeriesView({ meta, onWatched }: { meta: Meta; onWatched: () => void }) 
               { label: `Mark ${seasonName(season).toLowerCase()} as not watched`, onSelect: () => void markWatched(episodes, false, `${seasonName(season)} marked as not watched`), disabled: !seenCount }
             ]}
           />
+          {/* After the menu, so on a phone the season and its menu stay together and the counts wrap below. */}
+          <span className="muted num season-summary">{summary}</span>
         </div>
         <TabBar value={tab} onChange={(value) => { setTab(value); navigate(`/title/series/${meta.id}?season=${season}${value === 'download' ? '&tab=download' : ''}`, { replace: true }); }} tabs={[{ value: 'episodes', label: 'Episodes' }, { value: 'download', label: 'Download' }]} />
       </div>
